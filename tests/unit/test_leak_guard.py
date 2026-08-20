@@ -24,12 +24,15 @@ def test_raises_when_full_secret_appears_in_payload():
 
 
 def test_raises_when_only_a_partial_fragment_appears_in_payload():
-    """Adversarial case: even a partial leak must be caught — 8 contiguous
+    """Adversarial case: even a partial leak must be caught — 16 contiguous
     characters of a real secret is already enough to meaningfully narrow it
-    down, so a fragment match is treated exactly as seriously as a full one."""
+    down, so a fragment match is treated exactly as seriously as a full one.
+    (Fragment length is 16, not 8: 8 was short enough to coincidentally
+    collide with unrelated short boilerplate/dummy text across candidates —
+    see secret_registry.py's _FRAGMENT_LEN.)"""
     guard = make_guard({"c1": GITHUB_SECRET})
-    sneaky_payload = "some text ...Pw5k4aXc... more text, nothing to see here"
-    assert "Pw5k4aXc" in GITHUB_SECRET  # sanity check on the test itself
+    sneaky_payload = "some text ...Pw5k4aXcaT4fNP0U... more text, nothing to see here"
+    assert "Pw5k4aXcaT4fNP0U" in GITHUB_SECRET  # sanity check on the test itself
     with pytest.raises(LeakError):
         guard.check(sneaky_payload, candidate_id="c1")
 

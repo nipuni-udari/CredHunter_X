@@ -26,5 +26,8 @@ class MetricReport:
     precision: float
     recall: float
     f1: float
+    lost_count: int = 0  # candidates with no matching ground-truth row — excluded
+    # from precision/recall/F1 (matches CredData's own scoring convention),
+    # reported separately since it's still diagnostically important.
     mcnemar_stat: float | None = None
     mcnemar_p_value: float | None = None

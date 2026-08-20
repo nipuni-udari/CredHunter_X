@@ -20,6 +20,14 @@ def parse_gitleaks_report(
     guessed from path structure, since what "repo" means is only meaningful
     in specific contexts (e.g. the CredData evaluation harness knows it;  a
     plain CLI scan of a user's folder doesn't have one).
+
+    value_start/value_end are derived by searching for matched_value within
+    its own line rather than trusting gitleaks' own StartColumn/EndColumn —
+    verified empirically (against this project's own fixtures) to sometimes
+    be wrong (e.g. one rule's EndColumn equalled the line's total length,
+    not the secret's actual end). matched_value itself is always correct,
+    so an exact string search against it is reliable where the reported
+    columns are not.
     """
     source_root = source_root.resolve()
     file_cache: dict[Path, list[str]] = {}
@@ -44,6 +52,14 @@ def parse_gitleaks_report(
         context_before = lines[before_start : line_start - 1]
         context_after = lines[line_end : line_end + context_lines]
         matched_lines = lines[line_start - 1 : line_end]
+        matched_value = finding["Secret"]
+        first_line = matched_lines[0] if matched_lines else ""
+        derived_start = first_line.find(matched_value)
+        if derived_start == -1:
+            value_start, value_end = -1, -1
+        else:
+            value_start = derived_start
+            value_end = derived_start + len(matched_value)
 
         candidates.append(
             Candidate(
@@ -52,9 +68,9 @@ def parse_gitleaks_report(
                 line_start=line_start,
                 line_end=line_end,
                 rule_id=finding["RuleID"],
-                matched_value=finding["Secret"],
-                value_start=int(finding["StartColumn"]),
-                value_end=int(finding["EndColumn"]),
+                matched_value=matched_value,
+                value_start=value_start,
+                value_end=value_end,
                 entropy=float(finding["Entropy"]),
                 matched_lines=matched_lines,
                 context_before=context_before,

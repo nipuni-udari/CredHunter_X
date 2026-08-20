@@ -1,0 +1,9 @@
+Id,FileID,Domain,RepoName,FilePath,LineStart,LineEnd,GroundTruth,ValueStart,ValueEnd,CryptographyKey,PredefinedPattern,Category
+830,a5c0c9aa,GitHub,02dfa7ec,data/02dfa7ec/test/a5c0c9aa.py,524,524,F,,,,,Key
+29502,e43ec22b,GitHub,02dfa7ec,data/02dfa7ec/test/setting/e43ec22b.py,15,15,T,25,41,,,Password
+35963,3279f9a1,GitHub,02dfa7ec,data/02dfa7ec/setting/3279f9a1.py,100,100,X,26,90,,,Other
+11503182,188e3140,GitHub,057480bf,data/057480bf/test/tool/188e3140.py,9,9,T,603,647,,,Salt
+11519093,188e3140,GitHub,057480bf,data/057480bf/test/tool/188e3140.py,10,10,T,12,20,,,Password
+36233,3f04cb2a,GitHub,057480bf,data/057480bf/test/3f04cb2a.py,32,32,X,29,33,,,Password
+32209,e244fd62,GitHub,0b0a8cd6,data/0b0a8cd6/_/e244fd62.py,19,19,T,69,73,,,Password
+1979,58f9092a,GitHub,0b0a8cd6,data/0b0a8cd6/_/58f9092a.py,439,439,F,,,,,Key

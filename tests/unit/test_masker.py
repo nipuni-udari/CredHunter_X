@@ -5,7 +5,12 @@ from dataclasses import replace
 from pathlib import Path
 
 from credhunter_x.gitleaks.parser import parse_gitleaks_report
-from credhunter_x.masking.masker import build_raw_context, mask_context_window, mask_value
+from credhunter_x.masking.masker import (
+    build_raw_context,
+    mask_arbitrary_text,
+    mask_context_window,
+    mask_value,
+)
 from credhunter_x.models.treatment import Treatment
 
 FIXTURES_DIR = Path(__file__).resolve().parent.parent / "fixtures"
@@ -90,12 +95,69 @@ def test_mask_context_window_ignores_candidates_from_a_different_file():
     assert len(result.masked_spans) == 1
 
 
-def test_build_raw_context_leaves_secret_unmasked():
+def test_build_raw_context_leaves_target_secret_unmasked():
     candidates = load_candidates()
     github = next(c for c in candidates if c.rule_id == "github-pat")
 
-    result = build_raw_context(github)
+    result = build_raw_context(github, [])
 
     assert result.treatment == Treatment.RAW
     assert GITHUB_SECRET in result.sanitised_snippet
     assert result.masked_spans == []
+
+
+def test_build_raw_context_still_masks_other_secrets_in_the_same_window():
+    """RAW treatment means "reveal this one candidate's real value," not
+    "expose every secret nearby" — a bystander secret sharing the window
+    (here, Slack's token sits one line below GitHub's) must stay masked
+    even when the target itself is sent raw."""
+    candidates = load_candidates()
+    github = next(c for c in candidates if c.rule_id == "github-pat")
+    slack = next(c for c in candidates if c.rule_id == "slack-bot-token")
+
+    result = build_raw_context(github, [slack])
+
+    assert GITHUB_SECRET in result.sanitised_snippet
+    assert SLACK_SECRET not in result.sanitised_snippet
+    assert len(result.masked_spans) == 1
+    assert result.masked_spans[0].start == slack.line_start
+
+
+def test_mask_arbitrary_text_masks_a_known_secret_found_anywhere():
+    """Unlike the window-based masking above, this is for Arm B's tool
+    results -- text that can come from anywhere in the repo, not just a
+    candidate's own precomputed window."""
+    candidates = load_candidates()
+    slack = next(c for c in candidates if c.rule_id == "slack-bot-token")
+
+    text = f"some unrelated file content...\n{SLACK_SECRET}\n...more content"
+    result = mask_arbitrary_text(text, [slack])
+
+    assert SLACK_SECRET not in result
+    assert "some unrelated file content" in result
+    assert "more content" in result
+
+
+def test_mask_arbitrary_text_masks_multiple_occurrences_and_candidates():
+    candidates = load_candidates()
+    github = next(c for c in candidates if c.rule_id == "github-pat")
+    slack = next(c for c in candidates if c.rule_id == "slack-bot-token")
+
+    text = f"{GITHUB_SECRET} appears twice: {GITHUB_SECRET}\nand also {SLACK_SECRET}"
+    result = mask_arbitrary_text(text, [github, slack])
+
+    assert GITHUB_SECRET not in result
+    assert SLACK_SECRET not in result
+
+
+def test_mask_arbitrary_text_leaves_unrelated_text_untouched_when_no_secret_present():
+    candidates = load_candidates()
+    github = next(c for c in candidates if c.rule_id == "github-pat")
+
+    text = "just some ordinary code with no secrets in it"
+    assert mask_arbitrary_text(text, [github]) == text
+
+
+def test_mask_arbitrary_text_handles_an_empty_candidate_list():
+    text = f"contains {GITHUB_SECRET} but nothing is registered"
+    assert mask_arbitrary_text(text, []) == text
