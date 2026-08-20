@@ -31,7 +31,7 @@ jobs:
         run: uv run mypy src
 
       - name: Test
-        run: uv run pytest --cov=credhunter_x
+        run: uv run pytest -m "not live" --cov=credhunter_x
 
       - name: Scan repo for secrets
         run: gitleaks detect --source . --no-git -v

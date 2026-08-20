@@ -19,7 +19,7 @@ htmlcov/
 
 data/creddata_raw/
 data/processed/
-results/*.jsonl
+results/
 
 .idea/
 .vscode/

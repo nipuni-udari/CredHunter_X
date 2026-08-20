@@ -14,6 +14,7 @@ from credhunter_x.guard.errors import LeakError
 from credhunter_x.guard.leak_guard import LeakGuard
 from credhunter_x.llm.guarded_client import GuardedLLMClient
 from credhunter_x.llm.litellm_client import LiteLLMClient
+from credhunter_x.llm.parsing import LLMParsingError
 from credhunter_x.masking.masker import build_raw_context, mask_context_window
 from credhunter_x.masking.secret_registry import SecretRegistry
 from credhunter_x.models.candidate import Candidate
@@ -54,7 +55,7 @@ def classify_candidates(
     scan_config: ScanConfig,
     source_root: Path,
     delay_seconds: float = 0.0,
-    skip_on_leak_error: bool = False,
+    skip_candidate_on_error: bool = False,
 ) -> list[ScanResult]:
     """Masking + classification over an already-discovered candidate list —
     the shared tail of scan_repository(), factored out so
@@ -72,18 +73,23 @@ def classify_candidates(
     faster than the client's own retry/backoff can recover from, so
     scripts/run_evaluation.py passes a nonzero value there.
 
-    skip_on_leak_error (default False, so scan_repository/the CLI's normal
-    behaviour is unchanged) lets scripts/run_evaluation.py opt in to
+    skip_candidate_on_error (default False, so scan_repository/the CLI's
+    normal behaviour is unchanged) lets scripts/run_evaluation.py opt in to
     excluding just the offending candidate from the returned results
-    instead of letting LeakError propagate and abort the whole batch. This
-    does not weaken the guard itself: the call that would have leaked a
-    fragment still aborts, nothing is ever sent, and the block is still
-    logged at ERROR by LeakGuard.check() before this catches it. It only
-    changes what happens *after* that abort — move on to the next
-    candidate instead of crashing the process — which matters for Arm B,
-    where a tool call can legitimately pull in a paired public
-    key/certificate's overlapping bytes from outside a candidate's fixed
-    context window (see scripts/run_evaluation.py)."""
+    instead of letting the whole batch abort. Two error types are caught:
+
+    - LeakError: does not weaken the guard itself — the call that would
+      have leaked a fragment still aborts, nothing is ever sent, and the
+      block is still logged at ERROR by LeakGuard.check() before this
+      catches it. It only changes what happens *after* that abort — move
+      on to the next candidate instead of crashing the process — which
+      matters for Arm B, where a tool call can legitimately pull in a
+      paired public key/certificate's overlapping bytes from outside a
+      candidate's fixed context window (see scripts/run_evaluation.py).
+    - LLMParsingError: no safety concern at all, just a malformed/
+      unparseable final answer from the model for that one candidate
+      (e.g. a stray chat-template token instead of JSON) — excluding it
+      is a pure availability trade-off, not a guard decision."""
     if not candidates:
         return []
 
@@ -107,14 +113,22 @@ def classify_candidates(
             time.sleep(delay_seconds)
         others = [c for c in candidates if c.id != candidate.id]
         context = _build_context(candidate, others, scan_config.treatment)
-        if skip_on_leak_error:
+        if skip_candidate_on_error:
             try:
                 classification = classifier.classify(candidate, context)
             except LeakError:
                 logger.warning(
                     "Excluding candidate %s from results after a blocked call "
-                    "(skip_on_leak_error=True)",
+                    "(skip_candidate_on_error=True)",
                     candidate.id,
+                )
+                continue
+            except LLMParsingError as exc:
+                logger.warning(
+                    "Excluding candidate %s from results after unparseable model "
+                    "output (skip_candidate_on_error=True): %s",
+                    candidate.id,
+                    exc,
                 )
                 continue
         else:

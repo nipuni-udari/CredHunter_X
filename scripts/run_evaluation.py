@@ -13,13 +13,19 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 from credhunter_x.config.settings import Mode, ScanConfig, Settings
 from credhunter_x.dataset.creddata import GroundTruthRow, load_creddata_labels
 from credhunter_x.dataset.split import split_by_repo
-from credhunter_x.evaluation.labeler import MatchOutcome, index_ground_truth, match_candidate
+from credhunter_x.evaluation.labeler import (
+    MatchOutcome,
+    index_ground_truth,
+    match_candidate,
+)
 from credhunter_x.evaluation.metrics import compute_metrics, mcnemar_test
 from credhunter_x.gitleaks.parser import parse_gitleaks_report
 from credhunter_x.gitleaks.runner import run_gitleaks
@@ -27,9 +33,10 @@ from credhunter_x.models.candidate import Candidate
 from credhunter_x.models.classification import Label
 from credhunter_x.models.evaluation import MetricReport
 from credhunter_x.models.treatment import Treatment
-from credhunter_x.pipeline.orchestrator import classify_candidates
+from credhunter_x.pipeline.orchestrator import ScanResult, classify_candidates
 
 CREDDATA_ROOT = Path("data/creddata_raw/CredData")
+RESULTS_DIR = Path("results")
 
 
 def _repo_id_of(file_path: str) -> str:
@@ -62,6 +69,126 @@ def _print_report(report: MetricReport) -> None:
     print("=" * 60)
 
 
+def _write_results(
+    *,
+    arm: str,
+    treatment: str,
+    split: str,
+    model: str,
+    scan_results: list[ScanResult],
+    excluded: list[Candidate],
+    gt_rows: list[GroundTruthRow],
+    report: MetricReport,
+) -> None:
+    """Persists a run's full per-candidate output plus its summary metrics
+    to results/, gitignored (raw treatment's explanations can quote real
+    secret values verbatim, same as they do on stdout -- inherent to raw
+    treatment, not new exposure here)."""
+    RESULTS_DIR.mkdir(exist_ok=True)
+    stem = f"{arm}_{treatment}_{split}"
+    gt_index = index_ground_truth(gt_rows)
+
+    jsonl_path = RESULTS_DIR / f"{stem}.jsonl"
+    with jsonl_path.open("w", encoding="utf-8") as f:
+        for result in scan_results:
+            c, cl = result.candidate, result.classification
+            row = {
+                "candidate_id": c.id,
+                "file_path": c.file_path,
+                "line_start": c.line_start,
+                "line_end": c.line_end,
+                "rule_id": c.rule_id,
+                "ground_truth_outcome": match_candidate(c, gt_index).value,
+                "label": cl.label.value,
+                "confidence": cl.confidence,
+                "severity": cl.severity.value,
+                "explanation": cl.explanation,
+                "remediation": cl.remediation,
+                "turns": cl.turns,
+                "input_tokens": cl.input_tokens,
+                "output_tokens": cl.output_tokens,
+                "latency_ms": cl.latency_ms,
+                "tool_calls": [
+                    {
+                        "tool_name": tc.tool_name,
+                        "arguments": tc.arguments,
+                        "result_summary": tc.result_summary,
+                    }
+                    for tc in cl.tool_calls
+                ],
+            }
+            f.write(json.dumps(row) + "\n")
+
+    summary_path = RESULTS_DIR / f"{stem}_summary.json"
+    summary = {
+        "arm": arm,
+        "treatment": treatment,
+        "split": split,
+        "model": model,
+        "generated_at": datetime.now(UTC).isoformat(),
+        "n_candidates_evaluated": len(scan_results),
+        "excluded_candidate_ids": [c.id for c in excluded],
+        "metrics": {
+            "n_candidates": report.n_candidates,
+            "lost_count": report.lost_count,
+            "precision": report.precision,
+            "recall": report.recall,
+            "f1": report.f1,
+            "mcnemar_stat": report.mcnemar_stat,
+            "mcnemar_p_value": report.mcnemar_p_value,
+        },
+    }
+    summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    print(f"  results written to {jsonl_path} and {summary_path}", flush=True)
+
+
+def _write_gitleaks_results(
+    *,
+    split: str,
+    candidates: list[Candidate],
+    gt_rows: list[GroundTruthRow],
+    report: MetricReport,
+) -> None:
+    """Persists the GitLeaks-only baseline the same way _write_results does
+    for the LLM arms, so every arm has a comparable results/ file. No
+    classification fields here — GitLeaks itself has no label/confidence/
+    explanation, just a flagged file+line."""
+    RESULTS_DIR.mkdir(exist_ok=True)
+    stem = f"gitleaks_only_raw_{split}"
+    gt_index = index_ground_truth(gt_rows)
+
+    jsonl_path = RESULTS_DIR / f"{stem}.jsonl"
+    with jsonl_path.open("w", encoding="utf-8") as f:
+        for c in candidates:
+            row = {
+                "candidate_id": c.id,
+                "file_path": c.file_path,
+                "line_start": c.line_start,
+                "line_end": c.line_end,
+                "rule_id": c.rule_id,
+                "ground_truth_outcome": match_candidate(c, gt_index).value,
+            }
+            f.write(json.dumps(row) + "\n")
+
+    summary_path = RESULTS_DIR / f"{stem}_summary.json"
+    summary = {
+        "arm": "gitleaks_only",
+        "treatment": "raw",
+        "split": split,
+        "generated_at": datetime.now(UTC).isoformat(),
+        "n_candidates_evaluated": len(candidates),
+        "metrics": {
+            "n_candidates": report.n_candidates,
+            "lost_count": report.lost_count,
+            "precision": report.precision,
+            "recall": report.recall,
+            "f1": report.f1,
+        },
+    }
+    summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    print(f"  results written to {jsonl_path} and {summary_path}", flush=True)
+
+
 def _run_gitleaks_only(
     candidates: list[Candidate], gt_rows: list[GroundTruthRow]
 ) -> tuple[MetricReport, list[bool]]:
@@ -81,6 +208,7 @@ def _run_llm_arm(
     *,
     mode: Mode,
     treatment: Treatment,
+    split: str,
 ) -> tuple[MetricReport, MetricReport]:
     """Returns (gitleaks_only_report, llm_report), both computed over the
     same surviving candidate set so McNemar pairing stays valid even when
@@ -92,7 +220,7 @@ def _run_llm_arm(
     Arm B's model happens to call a tool that pulls in that overlapping
     content from outside the candidate's fixed context window -- so the
     survivor set is only known after classify_candidates() returns, not
-    filterable up front. See classify_candidates' skip_on_leak_error
+    filterable up front. See classify_candidates' skip_candidate_on_error
     docstring for what does and doesn't change about the guard itself."""
     gt_index = index_ground_truth(gt_rows)
     total_true_count = sum(1 for r in gt_rows if r.ground_truth)
@@ -115,15 +243,16 @@ def _run_llm_arm(
         scan_config=scan_config,
         source_root=CREDDATA_ROOT,
         delay_seconds=8.0,
-        skip_on_leak_error=True,
+        skip_candidate_on_error=True,
     )
 
     survived_ids = {r.candidate.id for r in scan_results}
     excluded = [c for c in candidates if c.id not in survived_ids]
     if excluded:
         print(
-            f"  {len(excluded)} candidate(s) excluded: the guard blocked a real-but-harmless "
-            "byte overlap rather than a genuine leak (see _run_llm_arm docstring)",
+            f"  {len(excluded)} candidate(s) excluded: either the guard blocked a "
+            "real-but-harmless byte overlap, or the model produced unparseable output "
+            "(see _run_llm_arm docstring / the WARNING-level log line for each)",
             flush=True,
         )
         for c in excluded:
@@ -160,6 +289,17 @@ def _run_llm_arm(
         lost_count=report.lost_count,
         mcnemar_stat=stat,
         mcnemar_p_value=p_value,
+    )
+
+    _write_results(
+        arm=arm_name,
+        treatment=treatment.value,
+        split=split,
+        model=settings.llm_model,
+        scan_results=scan_results,
+        excluded=excluded,
+        gt_rows=gt_rows,
+        report=report,
     )
     return gitleaks_report, report
 
@@ -202,12 +342,17 @@ def main() -> None:
     print(f"  {len(candidates)} .py candidates fall within the '{args.split}' split", flush=True)
 
     gitleaks_report, _ = _run_gitleaks_only(candidates, gt_rows)
+    _write_gitleaks_results(
+        split=args.split, candidates=candidates, gt_rows=gt_rows, report=gitleaks_report
+    )
 
     if args.arm == "gitleaks_only":
         _print_report(gitleaks_report)
         return
 
-    gitleaks_report, llm_report = _run_llm_arm(candidates, gt_rows, mode=mode, treatment=treatment)
+    gitleaks_report, llm_report = _run_llm_arm(
+        candidates, gt_rows, mode=mode, treatment=treatment, split=args.split
+    )
 
     print()
     print("--- gitleaks_only (for comparison / McNemar pairing) ---")
