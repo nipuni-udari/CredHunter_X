@@ -75,3 +75,60 @@ def test_raw_permit_for_wrong_candidate_id_does_not_excuse_anything():
             candidate_id="c1",
             raw_permit_candidate_id="nonexistent-id",
         )
+
+
+# A modulus long enough to exceed _FRAGMENT_LEN (16), reused verbatim inside
+# both a "private key" and its paired "public key"/"certificate" below —
+# standing in for the real cryptographic overlap between a key pair.
+_SHARED_MODULUS = "Xk29fQpL7mZs4Wn8Rt5Vc3Yb6Hj1Gd0AeKf7Nq2Ms9Pw4Tz"
+
+
+def _pem_block(header: str, body: str = _SHARED_MODULUS) -> str:
+    return f"-----BEGIN {header}-----\n{body}\n-----END {header}-----"
+
+
+_PRIVATE_KEY_PEM = _pem_block("RSA PRIVATE KEY", f"{_SHARED_MODULUS}\nSecretExtra")
+
+
+def test_fragment_inside_a_public_key_block_is_excused():
+    guard = make_guard({"c1": _PRIVATE_KEY_PEM})
+    payload = "here is the matching cert:\n" + _pem_block("CERTIFICATE")
+    guard.check(payload, candidate_id="c1")  # must not raise
+
+
+def test_fragment_inside_a_public_key_variant_block_is_excused():
+    guard = make_guard({"c1": _PRIVATE_KEY_PEM})
+    payload = _pem_block("RSA PUBLIC KEY")
+    guard.check(payload, candidate_id="c1")  # must not raise
+
+
+def test_fragment_outside_any_safe_block_still_trips_even_with_a_safe_block_present():
+    """A payload can contain a legitimate certificate AND, separately, a raw
+    leak elsewhere — the presence of one safe block must not blanket-excuse
+    the whole payload."""
+    guard = make_guard({"c1": _PRIVATE_KEY_PEM})
+    payload = _pem_block("CERTIFICATE") + f"\noops, leaked again: {_SHARED_MODULUS}"
+    with pytest.raises(LeakError):
+        guard.check(payload, candidate_id="c1")
+
+
+def test_a_second_private_key_sharing_fragments_still_trips_the_guard():
+    """The core safety boundary: a block that is ITSELF labeled a private
+    key is never excused, even though it superficially looks like the same
+    "paired key material" pattern — this is the real duplicate-leak
+    scenario the guard exists to catch."""
+    guard = make_guard({"c1": _PRIVATE_KEY_PEM})
+    payload = _pem_block("RSA PRIVATE KEY", f"{_SHARED_MODULUS}\nOtherExtra")
+    with pytest.raises(LeakError):
+        guard.check(payload, candidate_id="c1")
+
+
+def test_mismatched_begin_end_pem_markers_are_not_treated_as_a_safe_block():
+    """An unclosed or mismatched "BEGIN PUBLIC KEY" without its own matching
+    END marker must not accidentally create a safe span that swallows
+    unrelated trailing content."""
+    guard = make_guard({"c1": _PRIVATE_KEY_PEM})
+    mismatched = "-----BEGIN PUBLIC KEY-----\nnot the real body\n-----END CERTIFICATE-----"
+    payload = f"{mismatched}\n{_SHARED_MODULUS}"
+    with pytest.raises(LeakError):
+        guard.check(payload, candidate_id="c1")
