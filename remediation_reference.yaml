@@ -1,0 +1,38 @@
+# Pre-registered reference standard for RQ3 (remediation quality). Each
+# entry's required_elements/source is written BEFORE looking at any
+# collected remediation output (results/*.jsonl) -- filling this in after
+# the fact would bias it toward whatever the model already says, defeating
+# the whole point of a pre-registered standard. This is scaffolding only:
+# every entry below is a placeholder for the student to fill in as a real
+# methodological step, not something authored by an LLM on their behalf.
+#
+# One entry per rule_id in src/credhunter_x/classifiers/tools/get_gitleaks_rule.py's
+# _RULE_DESCRIPTIONS.
+
+aws-access-token:
+  required_elements: []
+  source: "TODO"
+
+private-key:
+  required_elements: []
+  source: "TODO"
+
+generic-api-key:
+  required_elements: []
+  source: "TODO"
+
+jwt:
+  required_elements: []
+  source: "TODO"
+
+github-pat:
+  required_elements: []
+  source: "TODO"
+
+slack-bot-token:
+  required_elements: []
+  source: "TODO"
+
+gcp-api-key:
+  required_elements: []
+  source: "TODO"

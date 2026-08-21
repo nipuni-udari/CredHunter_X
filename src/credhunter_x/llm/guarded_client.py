@@ -3,8 +3,11 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from pydantic import BaseModel
+
 from credhunter_x.guard.leak_guard import LeakGuard
 from credhunter_x.llm.client import LLMClient, LLMResponse, LLMToolResponse
+from credhunter_x.llm.schema import ClassificationSchema
 
 
 class GuardedLLMClient:
@@ -25,6 +28,7 @@ class GuardedLLMClient:
         candidate_id: str = "",
         rule_id: str = "",
         raw_permit_candidate_id: str | None = None,
+        response_schema: type[BaseModel] = ClassificationSchema,
     ) -> LLMResponse:
         self._guard.check(
             prompt,
@@ -32,7 +36,7 @@ class GuardedLLMClient:
             rule_id=rule_id,
             raw_permit_candidate_id=raw_permit_candidate_id,
         )
-        return self._client.generate(prompt)
+        return self._client.generate(prompt, response_schema=response_schema)
 
     def generate_with_tools(
         self,

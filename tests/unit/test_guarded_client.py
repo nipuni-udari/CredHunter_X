@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import BaseModel
 
 from credhunter_x.guard.errors import LeakError
 from credhunter_x.guard.leak_guard import LeakGuard
 from credhunter_x.llm.client import LLMResponse
 from credhunter_x.llm.guarded_client import GuardedLLMClient
+from credhunter_x.llm.schema import ClassificationSchema, ElementCheckSchema
 from credhunter_x.masking.secret_registry import SecretRegistry
 
 GITHUB_SECRET = "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"
@@ -15,6 +17,7 @@ class _FakeLLMClient:
     def __init__(self, response: LLMResponse) -> None:
         self._response = response
         self.received_prompts: list[str] = []
+        self.received_schemas: list[type[BaseModel]] = []
 
     def generate(
         self,
@@ -23,8 +26,10 @@ class _FakeLLMClient:
         candidate_id: str = "",
         rule_id: str = "",
         raw_permit_candidate_id: str | None = None,
+        response_schema: type[BaseModel] = ClassificationSchema,
     ) -> LLMResponse:
         self.received_prompts.append(prompt)
+        self.received_schemas.append(response_schema)
         return self._response
 
 
@@ -67,3 +72,23 @@ def test_raw_permit_allows_the_named_candidates_own_value_through():
     )
 
     assert inner.received_prompts == [f"sending real value: {GITHUB_SECRET}"]
+
+
+def test_generate_defaults_to_classification_schema():
+    inner = _FakeLLMClient(LLMResponse(text="{}", input_tokens=1, output_tokens=1, latency_ms=1.0))
+    guard = make_guard({"c1": GITHUB_SECRET})
+    client = GuardedLLMClient(inner, guard)
+
+    client.generate("a clean masked payload", candidate_id="c1")
+
+    assert inner.received_schemas == [ClassificationSchema]
+
+
+def test_generate_forwards_a_non_default_response_schema():
+    inner = _FakeLLMClient(LLMResponse(text="{}", input_tokens=1, output_tokens=1, latency_ms=1.0))
+    guard = make_guard({"c1": GITHUB_SECRET})
+    client = GuardedLLMClient(inner, guard)
+
+    client.generate("a clean masked payload", candidate_id="c1", response_schema=ElementCheckSchema)
+
+    assert inner.received_schemas == [ElementCheckSchema]

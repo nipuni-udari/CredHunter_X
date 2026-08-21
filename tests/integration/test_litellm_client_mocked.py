@@ -7,6 +7,7 @@ import pytest
 
 from credhunter_x.llm import litellm_client as litellm_client_module
 from credhunter_x.llm.litellm_client import LiteLLMClient, LiteLLMClientError
+from credhunter_x.llm.schema import ClassificationSchema, ElementCheckSchema
 
 
 @dataclass
@@ -172,6 +173,34 @@ def test_generate_raises_after_exhausting_all_retry_attempts(monkeypatch: pytest
         client.generate("classify this")
 
     assert len(calls) == 5
+
+
+def test_generate_defaults_response_format_to_classification_schema(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    fake_response = _FakeResponse(
+        choices=[_FakeChoice(message=_FakeMessage(content="{}"))],
+        usage=_FakeUsage(prompt_tokens=1, completion_tokens=1),
+    )
+    calls = _install_fake_completion(monkeypatch, response=fake_response)
+
+    client = LiteLLMClient(model="gemini/gemini-flash-latest", api_key="fake-key")
+    client.generate("classify this")
+
+    assert calls[0]["response_format"] is ClassificationSchema
+
+
+def test_generate_forwards_a_non_default_response_schema(monkeypatch: pytest.MonkeyPatch):
+    fake_response = _FakeResponse(
+        choices=[_FakeChoice(message=_FakeMessage(content="{}"))],
+        usage=_FakeUsage(prompt_tokens=1, completion_tokens=1),
+    )
+    calls = _install_fake_completion(monkeypatch, response=fake_response)
+
+    client = LiteLLMClient(model="gemini/gemini-flash-latest", api_key="fake-key")
+    client.generate("check this", response_schema=ElementCheckSchema)
+
+    assert calls[0]["response_format"] is ElementCheckSchema
 
 
 def test_generate_ignores_guard_only_kwargs(monkeypatch: pytest.MonkeyPatch):

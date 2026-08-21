@@ -7,6 +7,8 @@ Usage:
     uv run python scripts/run_evaluation.py --split dev --arm gitleaks_only
     uv run python scripts/run_evaluation.py --split all --arm single --treatment raw
     uv run python scripts/run_evaluation.py --split all --arm single --treatment masked
+    uv run python scripts/run_evaluation.py --split all --arm single --treatment pseudonymised
+    uv run python scripts/run_evaluation.py --split all --arm single --treatment metadata_only
     uv run python scripts/run_evaluation.py --split all --arm agentic --treatment raw
 """
 
@@ -98,6 +100,7 @@ def _write_results(
                 "line_start": c.line_start,
                 "line_end": c.line_end,
                 "rule_id": c.rule_id,
+                "real_secret_length": len(c.matched_value),
                 "ground_truth_outcome": match_candidate(c, gt_index).value,
                 "label": cl.label.value,
                 "confidence": cl.confidence,
@@ -313,9 +316,13 @@ def main() -> None:
     parser.add_argument(
         "--arm", choices=["gitleaks_only", "single", "agentic"], default="gitleaks_only"
     )
-    parser.add_argument("--treatment", choices=["raw", "masked"], default="raw")
+    parser.add_argument(
+        "--treatment",
+        choices=["raw", "masked", "pseudonymised", "metadata_only"],
+        default="raw",
+    )
     args = parser.parse_args()
-    treatment = Treatment.RAW if args.treatment == "raw" else Treatment.MASKED
+    treatment = Treatment(args.treatment)
     mode = Mode.SINGLE if args.arm == "single" else Mode.AGENTIC
 
     print("Loading ground truth labels...", flush=True)

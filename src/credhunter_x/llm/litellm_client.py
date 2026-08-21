@@ -7,6 +7,7 @@ from typing import Any, cast
 import litellm
 from litellm.exceptions import RateLimitError, ServiceUnavailableError
 from litellm.types.utils import ModelResponse
+from pydantic import BaseModel
 
 from credhunter_x.llm.client import LLMResponse, LLMToolResponse, ToolCall
 from credhunter_x.llm.schema import ClassificationSchema
@@ -50,13 +51,14 @@ class LiteLLMClient:
         candidate_id: str = "",
         rule_id: str = "",
         raw_permit_candidate_id: str | None = None,
+        response_schema: type[BaseModel] = ClassificationSchema,
     ) -> LLMResponse:
         # guard-only metadata, irrelevant to the raw API call
         del candidate_id, rule_id, raw_permit_candidate_id
         start = time.monotonic()
         response = self._call_with_retry(
             messages=[{"role": "user", "content": prompt}],
-            response_format=ClassificationSchema,
+            response_format=response_schema,
         )
         latency_ms = (time.monotonic() - start) * 1000
 

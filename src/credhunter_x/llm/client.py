@@ -3,6 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from pydantic import BaseModel
+
+from credhunter_x.llm.schema import ClassificationSchema
+
 
 @dataclass(frozen=True)
 class LLMResponse:
@@ -48,6 +52,7 @@ class LLMClient(Protocol):
         candidate_id: str = "",
         rule_id: str = "",
         raw_permit_candidate_id: str | None = None,
+        response_schema: type[BaseModel] = ClassificationSchema,
     ) -> LLMResponse: ...
 
     def generate_with_tools(

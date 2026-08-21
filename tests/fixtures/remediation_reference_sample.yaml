@@ -1,0 +1,10 @@
+aws-access-token:
+  required_elements:
+    - "move to environment variable or secrets manager"
+    - "rotate or revoke the exposed key"
+  source: "OWASP Secrets Management Cheat Sheet"
+
+github-pat:
+  required_elements:
+    - "revoke the token in GitHub settings"
+  source: "GitHub docs"

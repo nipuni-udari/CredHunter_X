@@ -134,12 +134,35 @@ def test_scan_repository_agentic_mode_classifies_without_calling_a_tool(
     assert all(r.classification.arm == "agentic" for r in results)
 
 
-def test_scan_repository_raises_not_implemented_for_pseudonymised_treatment(
+def test_scan_repository_pseudonymised_treatment_classifies_and_never_sends_raw_secrets(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    _install_fake_completion(monkeypatch)
+    fake = _install_fake_completion(monkeypatch)
     settings = _fake_settings()
     scan_config = ScanConfig(treatment=Treatment.PSEUDONYMISED)
 
-    with pytest.raises(NotImplementedError):
-        scan_repository(SAMPLE_REPO, settings=settings, scan_config=scan_config)
+    results = scan_repository(SAMPLE_REPO, settings=settings, scan_config=scan_config)
+
+    assert {r.candidate.rule_id for r in results} == {"github-pat", "slack-bot-token"}
+    assert all(r.classification.label == Label.TRUE_SECRET for r in results)
+    for sent in fake.received_prompts:
+        assert GITHUB_SECRET not in sent
+        assert SLACK_SECRET not in sent
+
+
+def test_scan_repository_metadata_only_never_sends_a_real_or_length_matched_value(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    fake = _install_fake_completion(monkeypatch)
+    settings = _fake_settings()
+    scan_config = ScanConfig(treatment=Treatment.METADATA_ONLY)
+
+    results = scan_repository(SAMPLE_REPO, settings=settings, scan_config=scan_config)
+
+    assert {r.candidate.rule_id for r in results} == {"github-pat", "slack-bot-token"}
+    assert all(r.classification.label == Label.TRUE_SECRET for r in results)
+    for sent in fake.received_prompts:
+        assert GITHUB_SECRET not in sent
+        assert SLACK_SECRET not in sent
+        assert "•" * len(GITHUB_SECRET) not in sent
+        assert "•" * len(SLACK_SECRET) not in sent

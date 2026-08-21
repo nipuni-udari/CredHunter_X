@@ -83,8 +83,7 @@ class LeakGuard:
                 "Potential secret leak blocked (candidate=%s, rule=%s)", candidate_id, rule_id
             )
             raise LeakError(
-                "Outgoing payload contains a fragment of a known secret "
-                f"(candidate={candidate_id})"
+                f"Outgoing payload contains a fragment of a known secret (candidate={candidate_id})"
             )
 
     @staticmethod

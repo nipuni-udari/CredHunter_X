@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -15,7 +16,12 @@ from credhunter_x.guard.leak_guard import LeakGuard
 from credhunter_x.llm.guarded_client import GuardedLLMClient
 from credhunter_x.llm.litellm_client import LiteLLMClient
 from credhunter_x.llm.parsing import LLMParsingError
-from credhunter_x.masking.masker import build_raw_context, mask_context_window
+from credhunter_x.masking.masker import (
+    build_metadata_only_context,
+    build_pseudonymised_context,
+    build_raw_context,
+    mask_context_window,
+)
 from credhunter_x.masking.secret_registry import SecretRegistry
 from credhunter_x.models.candidate import Candidate
 from credhunter_x.models.classification import ClassificationResult
@@ -137,11 +143,18 @@ def classify_candidates(
     return results
 
 
+_CONTEXT_BUILDERS: dict[Treatment, Callable[[Candidate, list[Candidate]], SanitisedContext]] = {
+    Treatment.RAW: build_raw_context,
+    Treatment.MASKED: mask_context_window,
+    Treatment.PSEUDONYMISED: build_pseudonymised_context,
+    Treatment.METADATA_ONLY: build_metadata_only_context,
+}
+
+
 def _build_context(
     candidate: Candidate, others: list[Candidate], treatment: Treatment
 ) -> SanitisedContext:
-    if treatment == Treatment.RAW:
-        return build_raw_context(candidate, others)
-    if treatment == Treatment.MASKED:
-        return mask_context_window(candidate, others)
-    raise NotImplementedError(f"treatment {treatment!r} is not implemented yet")
+    builder = _CONTEXT_BUILDERS.get(treatment)
+    if builder is None:
+        raise NotImplementedError(f"treatment {treatment!r} is not implemented yet")
+    return builder(candidate, others)

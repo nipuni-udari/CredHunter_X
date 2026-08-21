@@ -61,18 +61,43 @@ you are evaluating, and their real values were never sent to you. Base your \
 judgement on the candidate under review, whose real value you can see \
 directly."""
 
+_PSEUDONYMISED_NOTE = """Note: this code window has been sanitised. Every \
+candidate secret value (this one and any others in the surrounding lines) \
+has been replaced with a FAKE value of the same shape and format as a real \
+credential of that type — it looks like a real secret, but it is not the \
+real one, and carries no information about the actual value. Do not treat \
+the placeholder's specific characters as evidence of anything; base your \
+judgement on the surrounding code (variable naming, file location, how the \
+value is used) and the metadata below, never on the fake value's literal \
+content."""
+
+_METADATA_ONLY_NOTE = """Note: this code window has been sanitised. Every \
+candidate secret value (this one and any others in the surrounding lines) \
+has been replaced with a short fixed marker, "[REDACTED]" — this marker \
+carries NO information about the real value's length, shape, or content; \
+its length is not related to the real value's length. The only signal \
+available for a redacted value is its metadata below: length, Shannon \
+entropy, character set, and the scanner rule that flagged it. Base your \
+judgement on the surrounding code (variable naming, file location, how the \
+value is used) and that metadata."""
+
+_TREATMENT_NOTES: dict[Treatment, str] = {
+    Treatment.MASKED: _MASKED_NOTE,
+    Treatment.RAW: _RAW_WITH_MASKED_NEIGHBOURS_NOTE,
+    Treatment.PSEUDONYMISED: _PSEUDONYMISED_NOTE,
+    Treatment.METADATA_ONLY: _METADATA_ONLY_NOTE,
+}
+
 
 def _context_sections(candidate: Candidate, context: SanitisedContext) -> list[str]:
     sections = []
 
     if context.masked_spans:
-        is_masked = context.treatment == Treatment.MASKED
-        note = _MASKED_NOTE if is_masked else _RAW_WITH_MASKED_NEIGHBOURS_NOTE
-        sections.append(note)
+        sections.append(_TREATMENT_NOTES[context.treatment])
         for span in context.masked_spans:
             metadata = span.metadata
             sections.append(
-                f"Masked span (lines {span.start}-{span.end}): "
+                f"Sanitised span (lines {span.start}-{span.end}): "
                 f"length={metadata.length}, entropy={metadata.entropy:.2f}, "
                 f"charset={metadata.charset!r}, rule={metadata.prefix_hint!r}"
             )
