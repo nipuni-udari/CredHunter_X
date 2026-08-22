@@ -35,11 +35,15 @@ class Mode(StrEnum):
 class ScanConfig(BaseModel):
     """User-selectable scan behaviour, loaded from .secretscan.yml.
 
-    Defaults to the privacy-safe choice — raw must be opted into explicitly
-    and is never the shipped default.
+    Defaults to the privacy-safe choice on treatment — raw must be opted
+    into explicitly and is never the shipped default — and to the more
+    thorough arm on mode: agentic is the shipped default a CI workflow gets
+    if it doesn't set `mode` at all, since a workflow gate cares more about
+    catching real secrets than about the extra tokens/latency a single
+    prompt saves. Both remain user-selectable via .secretscan.yml.
     """
 
-    mode: Mode = Mode.SINGLE
+    mode: Mode = Mode.AGENTIC
     treatment: Treatment = Treatment.MASKED
 
 

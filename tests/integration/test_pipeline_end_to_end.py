@@ -75,7 +75,7 @@ def _fake_settings(**overrides) -> Settings:
 def test_scan_repository_classifies_both_fixture_secrets(monkeypatch: pytest.MonkeyPatch):
     _install_fake_completion(monkeypatch)
     settings = _fake_settings()
-    scan_config = ScanConfig()  # default: single mode, masked treatment
+    scan_config = ScanConfig(mode=Mode.SINGLE)  # single mode, masked treatment
 
     results = scan_repository(SAMPLE_REPO, settings=settings, scan_config=scan_config)
 
@@ -86,7 +86,7 @@ def test_scan_repository_classifies_both_fixture_secrets(monkeypatch: pytest.Mon
 def test_scan_repository_masked_treatment_never_sends_raw_secrets(monkeypatch: pytest.MonkeyPatch):
     fake = _install_fake_completion(monkeypatch)
     settings = _fake_settings()
-    scan_config = ScanConfig()
+    scan_config = ScanConfig(mode=Mode.SINGLE)
 
     scan_repository(SAMPLE_REPO, settings=settings, scan_config=scan_config)
 
@@ -100,7 +100,7 @@ def test_scan_repository_raw_treatment_sends_the_real_secret_for_its_own_candida
 ):
     fake = _install_fake_completion(monkeypatch)
     settings = _fake_settings()
-    scan_config = ScanConfig(treatment=Treatment.RAW)
+    scan_config = ScanConfig(mode=Mode.SINGLE, treatment=Treatment.RAW)
 
     scan_repository(SAMPLE_REPO, settings=settings, scan_config=scan_config)
 
@@ -113,7 +113,7 @@ def test_scan_repository_returns_empty_list_for_a_clean_directory(
     _install_fake_completion(monkeypatch)
     (tmp_path / "clean.py").write_text("x = 1\n")
     settings = _fake_settings()
-    scan_config = ScanConfig()
+    scan_config = ScanConfig(mode=Mode.SINGLE)
 
     assert scan_repository(tmp_path, settings=settings, scan_config=scan_config) == []
 
@@ -139,7 +139,7 @@ def test_scan_repository_pseudonymised_treatment_classifies_and_never_sends_raw_
 ):
     fake = _install_fake_completion(monkeypatch)
     settings = _fake_settings()
-    scan_config = ScanConfig(treatment=Treatment.PSEUDONYMISED)
+    scan_config = ScanConfig(mode=Mode.SINGLE, treatment=Treatment.PSEUDONYMISED)
 
     results = scan_repository(SAMPLE_REPO, settings=settings, scan_config=scan_config)
 
@@ -155,7 +155,7 @@ def test_scan_repository_metadata_only_never_sends_a_real_or_length_matched_valu
 ):
     fake = _install_fake_completion(monkeypatch)
     settings = _fake_settings()
-    scan_config = ScanConfig(treatment=Treatment.METADATA_ONLY)
+    scan_config = ScanConfig(mode=Mode.SINGLE, treatment=Treatment.METADATA_ONLY)
 
     results = scan_repository(SAMPLE_REPO, settings=settings, scan_config=scan_config)
 
