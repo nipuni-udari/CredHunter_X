@@ -68,6 +68,24 @@ def _install_fake_completion(monkeypatch: pytest.MonkeyPatch) -> _FakeCompletion
     return fake
 
 
+class _FakeCompletionEmptyOnFirstCall:
+    """Reproduces the real failure found live in CredHunter-X's own GitHub
+    Action demo: a provider returning a completely empty response body for
+    one candidate (LLMParsingError: 'EOF while parsing a value'), with
+    every other candidate classified normally."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def __call__(self, *, model, api_key, messages, response_format=None, tools=None):
+        self.calls += 1
+        content = "" if self.calls == 1 else FAKE_RESPONSE_JSON
+        return _FakeResponse(
+            choices=[_FakeChoice(message=_FakeMessage(content=content))],
+            usage=_FakeUsage(prompt_tokens=1, completion_tokens=1),
+        )
+
+
 def _fake_settings(**overrides) -> Settings:
     return Settings(llm_model="gemini/gemini-flash-latest", llm_api_key="fake-key", **overrides)
 
@@ -77,10 +95,11 @@ def test_scan_repository_classifies_both_fixture_secrets(monkeypatch: pytest.Mon
     settings = _fake_settings()
     scan_config = ScanConfig(mode=Mode.SINGLE)  # single mode, masked treatment
 
-    results = scan_repository(SAMPLE_REPO, settings=settings, scan_config=scan_config)
+    outcome = scan_repository(SAMPLE_REPO, settings=settings, scan_config=scan_config)
 
-    assert {r.candidate.rule_id for r in results} == {"github-pat", "slack-bot-token"}
-    assert all(r.classification.label == Label.TRUE_SECRET for r in results)
+    assert {r.candidate.rule_id for r in outcome.results} == {"github-pat", "slack-bot-token"}
+    assert all(r.classification.label == Label.TRUE_SECRET for r in outcome.results)
+    assert outcome.skipped_count == 0
 
 
 def test_scan_repository_masked_treatment_never_sends_raw_secrets(monkeypatch: pytest.MonkeyPatch):
@@ -115,7 +134,9 @@ def test_scan_repository_returns_empty_list_for_a_clean_directory(
     settings = _fake_settings()
     scan_config = ScanConfig(mode=Mode.SINGLE)
 
-    assert scan_repository(tmp_path, settings=settings, scan_config=scan_config) == []
+    outcome = scan_repository(tmp_path, settings=settings, scan_config=scan_config)
+    assert outcome.results == []
+    assert outcome.skipped_count == 0
 
 
 def test_scan_repository_agentic_mode_classifies_without_calling_a_tool(
@@ -127,11 +148,12 @@ def test_scan_repository_agentic_mode_classifies_without_calling_a_tool(
     settings = _fake_settings()
     scan_config = ScanConfig(mode=Mode.AGENTIC)
 
-    results = scan_repository(SAMPLE_REPO, settings=settings, scan_config=scan_config)
+    outcome = scan_repository(SAMPLE_REPO, settings=settings, scan_config=scan_config)
 
-    assert {r.candidate.rule_id for r in results} == {"github-pat", "slack-bot-token"}
-    assert all(r.classification.label == Label.TRUE_SECRET for r in results)
-    assert all(r.classification.arm == "agentic" for r in results)
+    assert {r.candidate.rule_id for r in outcome.results} == {"github-pat", "slack-bot-token"}
+    assert all(r.classification.label == Label.TRUE_SECRET for r in outcome.results)
+    assert all(r.classification.arm == "agentic" for r in outcome.results)
+    assert outcome.skipped_count == 0
 
 
 def test_scan_repository_pseudonymised_treatment_classifies_and_never_sends_raw_secrets(
@@ -141,10 +163,11 @@ def test_scan_repository_pseudonymised_treatment_classifies_and_never_sends_raw_
     settings = _fake_settings()
     scan_config = ScanConfig(mode=Mode.SINGLE, treatment=Treatment.PSEUDONYMISED)
 
-    results = scan_repository(SAMPLE_REPO, settings=settings, scan_config=scan_config)
+    outcome = scan_repository(SAMPLE_REPO, settings=settings, scan_config=scan_config)
 
-    assert {r.candidate.rule_id for r in results} == {"github-pat", "slack-bot-token"}
-    assert all(r.classification.label == Label.TRUE_SECRET for r in results)
+    assert {r.candidate.rule_id for r in outcome.results} == {"github-pat", "slack-bot-token"}
+    assert all(r.classification.label == Label.TRUE_SECRET for r in outcome.results)
+    assert outcome.skipped_count == 0
     for sent in fake.received_prompts:
         assert GITHUB_SECRET not in sent
         assert SLACK_SECRET not in sent
@@ -157,12 +180,33 @@ def test_scan_repository_metadata_only_never_sends_a_real_or_length_matched_valu
     settings = _fake_settings()
     scan_config = ScanConfig(mode=Mode.SINGLE, treatment=Treatment.METADATA_ONLY)
 
-    results = scan_repository(SAMPLE_REPO, settings=settings, scan_config=scan_config)
+    outcome = scan_repository(SAMPLE_REPO, settings=settings, scan_config=scan_config)
 
-    assert {r.candidate.rule_id for r in results} == {"github-pat", "slack-bot-token"}
-    assert all(r.classification.label == Label.TRUE_SECRET for r in results)
+    assert {r.candidate.rule_id for r in outcome.results} == {"github-pat", "slack-bot-token"}
+    assert all(r.classification.label == Label.TRUE_SECRET for r in outcome.results)
+    assert outcome.skipped_count == 0
     for sent in fake.received_prompts:
         assert GITHUB_SECRET not in sent
         assert SLACK_SECRET not in sent
         assert "•" * len(GITHUB_SECRET) not in sent
         assert "•" * len(SLACK_SECRET) not in sent
+
+
+def test_scan_repository_survives_one_candidate_with_an_empty_model_response(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """The real bug found live in the GitHub Action demo: an unhandled
+    LLMParsingError from one candidate crashed the whole scan with a
+    traceback before any report was ever written. scan_repository() must
+    survive it, still classify the other candidate, and truthfully report
+    that one was skipped rather than silently returning a "clean" result."""
+    fake = _FakeCompletionEmptyOnFirstCall()
+    monkeypatch.setattr(litellm_client_module.litellm, "completion", fake)
+    settings = _fake_settings()
+    scan_config = ScanConfig(mode=Mode.SINGLE)
+
+    outcome = scan_repository(SAMPLE_REPO, settings=settings, scan_config=scan_config)
+
+    assert outcome.skipped_count == 1
+    assert len(outcome.results) == 1
+    assert outcome.results[0].classification.label == Label.TRUE_SECRET

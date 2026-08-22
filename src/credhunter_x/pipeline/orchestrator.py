@@ -36,22 +36,57 @@ class ScanResult:
     classification: ClassificationResult
 
 
+@dataclass(frozen=True)
+class ScanOutcome:
+    """scan_repository()'s return type. Separate from the bare
+    list[ScanResult] classify_candidates() returns, specifically so a
+    caller can tell "gitleaks found nothing" apart from "gitleaks found
+    something but couldn't get a verdict on it" — collapsing those two into
+    an empty list would let a CI check report a repo clean when it was
+    actually incomplete, which is the one thing a fail-closed scanner must
+    never do."""
+
+    results: list[ScanResult]
+    skipped_count: int
+
+
 def scan_repository(
     source: Path,
     *,
     settings: Settings,
     scan_config: ScanConfig,
     repo_id: str = "",
-) -> list[ScanResult]:
-    """Single wiring point: gitleaks -> masking -> classifier. Both the CLI
-    and scripts/run_evaluation.py call this rather than duplicating the
-    wiring. LiteLLMClient/GuardedLLMClient are constructed only here,
-    always wrapped together — no caller can obtain an unguarded client."""
+    skip_candidate_on_error: bool = True,
+) -> ScanOutcome:
+    """Single wiring point: gitleaks -> masking -> classifier. This is what
+    the CLI calls (scripts/run_evaluation.py calls classify_candidates()
+    directly instead, to reuse one gitleaks pass/registry across many
+    treatments). LiteLLMClient/GuardedLLMClient are constructed only here,
+    always wrapped together — no caller can obtain an unguarded client.
+
+    skip_candidate_on_error defaults to True here (unlike
+    classify_candidates' own default of False) because this is the
+    unattended, CI-facing path: one candidate hitting a malformed/empty
+    model response must not crash the whole scan and leave a CI check with
+    no report at all — see classify_candidates' own docstring for exactly
+    which two error types this covers and why neither is a safety
+    concession. A caller that genuinely wants a hard failure on any error
+    (e.g. debugging) can still pass skip_candidate_on_error=False.
+
+    Returns a ScanOutcome rather than the bare list classify_candidates()
+    returns, so the caller can see how many candidates gitleaks found but
+    couldn't get classified — see ScanOutcome's own docstring for why that
+    distinction matters."""
     findings = run_gitleaks(source, gitleaks_binary=settings.gitleaks_binary_path)
     candidates = parse_gitleaks_report(findings, source, repo_id=repo_id)
-    return classify_candidates(
-        candidates, settings=settings, scan_config=scan_config, source_root=source
+    results = classify_candidates(
+        candidates,
+        settings=settings,
+        scan_config=scan_config,
+        source_root=source,
+        skip_candidate_on_error=skip_candidate_on_error,
     )
+    return ScanOutcome(results=results, skipped_count=len(candidates) - len(results))
 
 
 def classify_candidates(

@@ -32,20 +32,21 @@ def scan(
     ),
 ) -> None:
     """Scans PATH and prints one line per candidate. Exits non-zero if any
-    candidate is classified true_secret — the signal a CI workflow gates
-    on to fail the check/block the merge."""
+    candidate is classified true_secret, or if any candidate couldn't be
+    classified at all (see --skipped below) — the signal a CI workflow
+    gates on to fail the check/block the merge."""
     settings = Settings()
     scan_config = load_scan_config()
-    results = scan_repository(path, settings=settings, scan_config=scan_config)
+    outcome = scan_repository(path, settings=settings, scan_config=scan_config)
+    results = outcome.results
 
     if sarif is not None:
         write_sarif_report(results, sarif)
     if html is not None:
         write_html_report(results, html)
 
-    if not results:
+    if not results and outcome.skipped_count == 0:
         typer.echo("No candidates found.")
-        return
 
     for result in results:
         c, r = result.candidate, result.classification
@@ -55,5 +56,17 @@ def scan(
         )
         typer.echo(f"    {r.explanation}")
 
-    if any(result.classification.label == Label.TRUE_SECRET for result in results):
+    if outcome.skipped_count:
+        # A skipped candidate is neither "clean" nor "confirmed" -- it's
+        # unresolved. Reporting this scan as clean just because none of the
+        # *successfully classified* candidates were true_secret would let
+        # a real secret ride through silently, which is exactly what a
+        # fail-closed tool must never do (see ScanOutcome's docstring).
+        typer.echo(
+            f"\n{outcome.skipped_count} candidate(s) could not be classified "
+            "(guard-blocked or unparseable model output) and are NOT reflected "
+            "above -- this scan is incomplete, review manually."
+        )
+
+    if outcome.skipped_count or any(r.classification.label == Label.TRUE_SECRET for r in results):
         raise typer.Exit(code=1)
