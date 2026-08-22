@@ -10,10 +10,14 @@ and Explanation in Python Source Code Repositories*.
 ## Status
 
 Implemented: GitLeaks-based candidate detection, two classifier arms
-(single-prompt and agentic/tool-using), four sanitisation treatments (`raw`,
-`masked`, `pseudonymised`, `metadata_only`), a fail-closed leak guard, the
-evaluation harness against CredData ground truth, and the remediation-quality
-scoring pipeline (RQ3). 169 tests passing.
+(single-prompt and agentic/tool-using, agentic shipped as the default), four
+sanitisation treatments (`raw`, `masked`, `pseudonymised`, `metadata_only`),
+a fail-closed leak guard, the evaluation harness against CredData ground
+truth, the remediation-quality scoring pipeline (RQ3), and a CLI that
+produces SARIF/HTML reports and gates CI on real findings. 192 tests
+passing. Proven live end to end (real push → Action → detection →
+classification → reports) against a throwaway demo repo — see [CI / GitHub
+Actions](#ci--github-actions) below.
 
 Not done, and not this codebase's job to do: the content of
 `remediation_reference.yaml` (a pre-registered methodological step — must be
@@ -65,9 +69,12 @@ caller constructing `ScanConfig` directly, never via `.secretscan.yml`.
 uv run credhunter-x path/to/repo
 ```
 
-Exits non-zero if any candidate is classified `true_secret` — this is the
-signal a CI check gates on to fail the build/block the merge. Optionally
-write machine- and human-readable reports:
+Exits non-zero if any candidate is classified `true_secret`, **or** if any
+candidate couldn't be classified at all (a malformed/empty model response,
+or a guard-blocked call) — an unresolved candidate is never treated as
+equivalent to a clean scan, since it might have been the real secret. This
+is the signal a CI check gates on to fail the build/block the merge.
+Optionally write machine- and human-readable reports:
 
 ```powershell
 uv run credhunter-x path/to/repo --sarif report.sarif --html report.html
@@ -78,6 +85,84 @@ uv run credhunter-x path/to/repo --sarif report.sarif --html report.html
 rather than just relabel every GitLeaks hit); `report.html` is a
 self-contained page for a human, and also lists dismissed false positives
 for transparency.
+
+**Viewing a SARIF file:** uploaded via a GitHub Action (see below), it
+shows up under the repo's **Security → Code scanning alerts** tab — no
+separate viewer needed. To inspect a local `.sarif` file directly, either
+install VS Code's official "SARIF Viewer" extension and open the file, or
+remember it's plain JSON (`jq '.runs[0].results[] | {rule: .ruleId, level: .level, message: .message.text}' report.sarif`).
+
+## CI / GitHub Actions
+
+Not published to PyPI — install straight from this repo. Proven live end
+to end against [nipuni-udari/credhunter-x-demo](https://github.com/nipuni-udari/credhunter-x-demo):
+a real push correctly got waved through with an explained false-positive
+dismissal, and a second push (a hardcoded credential with no "this is
+fake" tell) correctly failed the check, with the SARIF alert showing up in
+that repo's Security tab and the HTML report attached as a workflow
+artifact.
+
+```yaml
+# .github/workflows/scan.yml
+name: CredHunter-X secret scan
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install gitleaks
+        run: |
+          curl -sSL -o gitleaks.tar.gz \
+            https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
+          tar -xzf gitleaks.tar.gz gitleaks
+          sudo mv gitleaks /usr/local/bin/gitleaks
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install CredHunter-X
+        run: pip install "git+https://github.com/nipuni-udari/CredHunter_X.git"
+
+      # No continue-on-error: a real finding must fail this step (and the
+      # check). The two uploads below still run via if: always() so
+      # reports are available even when this step fails.
+      - name: Run CredHunter-X scan
+        env:
+          LLM_MODEL: ${{ secrets.LLM_MODEL }}
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+        run: credhunter-x . --sarif report.sarif --html report.html
+
+      - name: Upload SARIF to code scanning
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: report.sarif
+
+      - name: Upload HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: credhunter-x-report
+          path: report.html
+```
+
+Add `LLM_MODEL` and `LLM_API_KEY` as repository secrets (Settings → Secrets
+and variables → Actions) before this will run. SARIF upload to the
+Security tab requires a public repo, or a private one with GitHub Advanced
+Security.
 
 ## Running the research evaluation
 
