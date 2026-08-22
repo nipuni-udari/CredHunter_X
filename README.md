@@ -94,8 +94,11 @@ remember it's plain JSON (`jq '.runs[0].results[] | {rule: .ruleId, level: .leve
 
 ## CI / GitHub Actions
 
-Not published to PyPI — install straight from this repo. Proven live end
-to end against [nipuni-udari/credhunter-x-demo](https://github.com/nipuni-udari/credhunter-x-demo):
+Not published to PyPI — install straight from this repo, pinned to a tag
+(`@v0.1.0` below) so a workflow's behaviour doesn't silently change if
+`main` moves on; `pip install git+<url>` with no `@ref` would always track
+`main` instead. Proven live end to end against
+[nipuni-udari/credhunter-x-demo](https://github.com/nipuni-udari/credhunter-x-demo):
 a real push correctly got waved through with an explained false-positive
 dismissal, and a second push (a hardcoded credential with no "this is
 fake" tell) correctly failed the check, with the SARIF alert showing up in
@@ -134,7 +137,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install CredHunter-X
-        run: pip install "git+https://github.com/nipuni-udari/CredHunter_X.git"
+        run: pip install "git+https://github.com/nipuni-udari/CredHunter_X.git@v0.1.0"
 
       # No continue-on-error: a real finding must fail this step (and the
       # check). The two uploads below still run via if: always() so

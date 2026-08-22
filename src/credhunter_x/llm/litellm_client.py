@@ -12,6 +12,18 @@ from pydantic import BaseModel
 from credhunter_x.llm.client import LLMResponse, LLMToolResponse, ToolCall
 from credhunter_x.llm.schema import ClassificationSchema
 
+# Purely cosmetic, not an error suppression: with an "openrouter/..." model
+# string, litellm internally re-derives a provider from the *response's*
+# own model field (e.g. "google/gemma-4-26b-a4b-it", OpenRouter's naming,
+# not litellm's "gemini"/"vertex_ai" provider prefixes) for its own
+# post-call bookkeeping. That inner lookup can't resolve "google" and
+# prints litellm's "Provider List" banner before litellm itself discards
+# the failure -- see get_llm_provider_logic.py's suppress_debug_info
+# check. Every call still succeeds either way; this only silences litellm's
+# own noisy diagnostic print, and is litellm's own documented flag for
+# exactly that, not a change to any error handling here.
+litellm.suppress_debug_info = True
+
 _MAX_ATTEMPTS = 5
 _BASE_DELAY_SECONDS = 1.0
 _MAX_DELAY_SECONDS = 30.0
