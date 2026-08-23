@@ -13,23 +13,13 @@ _REDACTED_MARKER = "[REDACTED]"
 
 
 def mask_arbitrary_text(text: str, candidates: list[Candidate]) -> str:
-    """Masks every occurrence of any candidate's real value found anywhere
-    in arbitrary text — for Arm B's tool results, which can pull in content
-    from any file/location, not just a candidate's own precomputed context
-    window. There's no "target vs bystander" distinction for tool output —
-    every known secret is masked regardless of whose window it came from.
-
-    Matches at the fragment level (the same FRAGMENT_LEN-character
-    substrings SecretRegistry.fragments() generates, and LeakGuard.check()
-    itself scans for) rather than requiring an exact whole-value match. A
-    tool result is often a small snippet (e.g. search_file's +/-2 lines of
-    context), which for a multi-line secret like a PEM private key almost
-    never contains the *entire* value — a whole-value-only replace would
-    silently miss that snippet and leave real key bytes in the payload,
-    with nothing catching it until (and unless) the guard's own fragment
-    check aborts the call outright. Matching fragments are merged into
-    contiguous spans before replacement so a longer leaked run is blanked
-    out in full, not just its first FRAGMENT_LEN characters."""
+    """Masks every occurrence of any candidate's real value anywhere in
+    arbitrary text -- for Arm B's tool results, which can pull in content
+    from anywhere in the repo. Matches at the fragment level (same as
+    SecretRegistry.fragments()/LeakGuard), not just a whole-value match --
+    a small tool snippet often only contains part of a multi-line secret
+    like a PEM key. Matching fragments are merged into contiguous spans
+    before replacement so a longer leak is blanked out in full."""
     registry = SecretRegistry()
     registry.register_candidates(candidates)
     fragments = registry.fragments()
@@ -65,12 +55,8 @@ def mask_arbitrary_text(text: str, candidates: list[Candidate]) -> str:
 
 
 def _compute_metadata(value: str, type_hint: str) -> SecretMetadata:
-    """type_hint should come from something already-public about the
-    finding (e.g. the scanner's rule_id), never sliced from the secret
-    value itself: only a handful of credential types have a prefix that's
-    genuinely constant across every instance of that type (safe to
-    reveal), and hardcoding that list isn't worth the risk of getting it
-    wrong for MVP."""
+    """type_hint should come from something already-public (e.g. rule_id),
+    never sliced from the secret value itself."""
     return SecretMetadata(
         length=len(value),
         entropy=shannon_entropy(value),
@@ -85,18 +71,14 @@ def mask_value(value: str, type_hint: str = "") -> tuple[str, SecretMetadata]:
 
 
 def pseudonymise_value(value: str, type_hint: str = "") -> tuple[str, SecretMetadata]:
-    """Replaces `value` with a fake-but-realistic same-shape value — the
-    model sees text that looks like a real credential, but nothing real.
-    See masking/pseudonymiser.py for the generation strategy."""
+    """Replaces `value` with a fake-but-realistic same-shape value. See
+    pseudonymiser.py for the generation strategy."""
     return generate_fake_value(value, type_hint), _compute_metadata(value, type_hint)
 
 
 def redact_value(value: str, type_hint: str = "") -> tuple[str, SecretMetadata]:
-    """Replaces `value` with a short fixed marker carrying NO length
-    signal — unlike mask_value's bullet-fill, which deliberately reveals
-    length via placeholder length. metadata_only's whole point is that the
-    only signal available is the explicit metadata line, not anything
-    inferable from the snippet itself."""
+    """Replaces `value` with a short fixed marker, no length signal --
+    unlike mask_value's bullet-fill, which reveals length."""
     return _REDACTED_MARKER, _compute_metadata(value, type_hint)
 
 
@@ -142,21 +124,11 @@ def _replace_candidate_in_lines(
     line_fallback_fn: Callable[[str], str],
 ) -> MaskedSpan:
     """Replaces every occurrence of candidate's value anywhere in the
-    window — not just within its own reported line range, since the
-    identical value can legitimately recur elsewhere nearby (e.g. a test
-    assertion re-checking a value gitleaks only flagged once, at its first
-    occurrence). Tries an exact substring replace first (preserves
-    surrounding code on each line). If that finds no match anywhere —
-    matched_value spans multiple lines and can never be "in" a single
-    line's text, or gitleaks reported a normalised value (e.g. URL-decoded)
-    that doesn't literally appear in the source — falls back to
-    line_fallback_fn over candidate's own line range outright, rather than
-    silently leaving real content unreplaced.
-
-    value_fn/line_fallback_fn are parameterised (rather than this function
-    hardcoding mask_value + a bullet-fill) so every treatment gets its own
-    correct fallback: a length-matched bullet fill is fine for masked, but
-    would leak length exactly where metadata_only promises not to."""
+    window, not just its own line range -- the same value can legitimately
+    recur nearby. Falls back to line_fallback_fn over the candidate's own
+    lines if no exact match is found (e.g. a multi-line value). value_fn/
+    line_fallback_fn are parameterised so each treatment gets its own
+    correct fallback."""
     placeholder, metadata = value_fn(candidate.matched_value, candidate.rule_id)
     replaced_any = False
     if "\n" not in candidate.matched_value:
@@ -185,12 +157,9 @@ def _mask_candidate_in_lines(candidate: Candidate, lines_by_number: dict[int, st
 
 
 def build_raw_context(target: Candidate, other_candidates: list[Candidate]) -> SanitisedContext:
-    """Unmasked window for target only — research baseline, never the
-    shipped default (see config/settings.py's load_scan_config). Every
-    OTHER candidate sharing this window is still masked: RAW treatment
-    means "show this one candidate's real value," not "expose every
-    secret nearby" — a bystander secret must never ride along just
-    because it happened to sit near the one under evaluation."""
+    """Unmasked window for target only -- research baseline, never the
+    shipped default. Every other candidate sharing this window is still
+    masked; RAW shows this one value, not everything nearby."""
     lines_by_number = _window_lines(target)
     others = _others_in_window(target, other_candidates, set(lines_by_number))
 
@@ -203,14 +172,9 @@ def build_raw_context(target: Candidate, other_candidates: list[Candidate]) -> S
 
 
 def mask_context_window(target: Candidate, other_candidates: list[Candidate]) -> SanitisedContext:
-    """Builds the masked text window around `target` — masking not just
-    target's own secret but every other candidate whose line falls inside
-    this same window, since sending +/-N lines of context would otherwise
-    leak whatever other secrets happen to sit in those lines. Masking is
-    done by exact string replacement of each candidate's known matched_value
-    directly, rather than slicing by value_start/value_end — simpler, and
-    doesn't depend on those offsets being derived correctly for every
-    candidate in the window."""
+    """Builds the masked window around `target`, masking every other
+    candidate whose line falls inside it too -- otherwise +/-N lines of
+    context would leak whatever else sits there."""
     lines_by_number = _window_lines(target)
     others = _others_in_window(target, other_candidates, set(lines_by_number))
 
@@ -225,18 +189,11 @@ def mask_context_window(target: Candidate, other_candidates: list[Candidate]) ->
 def build_pseudonymised_context(
     target: Candidate, other_candidates: list[Candidate]
 ) -> SanitisedContext:
-    """Same window-scoping as mask_context_window, but every value (target
-    and bystanders) is replaced with a fake-but-realistic same-shape value
-    instead of a bullet-fill — see masking/pseudonymiser.py.
-
-    Known, deliberate limitation: for a multi-line matched_value (private
-    keys), the exact-match replace can never succeed (see
-    _replace_candidate_in_lines), so this silently falls back to
-    _bullet_line_fallback — the same bullet-masking mask_context_window
-    uses — rather than attempting to synthesise a realistic multi-line PEM
-    block, which is out of scope for MVP. That candidate's window still
-    ends up fully sanitised, just not pseudonymised the way a single-line
-    secret's would be."""
+    """Same window-scoping as mask_context_window, but every value is
+    replaced with a fake-but-realistic same-shape value -- see
+    pseudonymiser.py. Multi-line values (private keys) fall back to
+    plain bullet-masking instead; synthesising a realistic multi-line PEM
+    block is out of scope."""
     lines_by_number = _window_lines(target)
     others = _others_in_window(target, other_candidates, set(lines_by_number))
 
@@ -256,12 +213,9 @@ def build_pseudonymised_context(
 def build_metadata_only_context(
     target: Candidate, other_candidates: list[Candidate]
 ) -> SanitisedContext:
-    """Same window-scoping as mask_context_window, but every value (target
-    and bystanders) is replaced with a short fixed marker carrying no
-    length signal, instead of a length-matched bullet-fill — the model's
-    only available signal is the metadata line appended by
-    llm/prompts.py's _context_sections, never anything inferable from the
-    snippet itself."""
+    """Same window-scoping as mask_context_window, but every value becomes
+    a short fixed marker with no length signal, instead of a length-matched
+    bullet-fill."""
     lines_by_number = _window_lines(target)
     others = _others_in_window(target, other_candidates, set(lines_by_number))
 

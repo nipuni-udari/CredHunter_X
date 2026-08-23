@@ -11,11 +11,8 @@ from credhunter_x.llm.schema import ClassificationSchema
 
 
 class GuardedLLMClient:
-    """Wraps any LLMClient and makes the leak-guard check unavoidable for
-    every outbound call. Production wiring should never construct an LLM
-    client without this — the only place an unwrapped client should exist
-    is a test exercising the concrete client in isolation (see
-    test_litellm_client_mocked.py)."""
+    """Wraps any LLMClient and makes the leak-guard check unavoidable.
+    Production code should never construct an LLM client without this."""
 
     def __init__(self, client: LLMClient, guard: LeakGuard) -> None:
         self._client = client
@@ -47,9 +44,7 @@ class GuardedLLMClient:
         rule_id: str = "",
         raw_permit_candidate_id: str | None = None,
     ) -> LLMToolResponse:
-        # Checks the FULL conversation history every call, not just the
-        # newest message — an unmasked tool result appended on an earlier
-        # turn must still be caught here on the next one.
+        # Full history every call, not just the newest message.
         self._guard.check(
             json.dumps(messages, default=str),
             candidate_id=candidate_id,

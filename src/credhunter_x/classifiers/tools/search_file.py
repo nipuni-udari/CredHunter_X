@@ -8,13 +8,9 @@ _MAX_RESULT_CHARS = 2000
 
 
 def search_file(source_root: Path, file_path: str, query: str) -> str:
-    """Searches one file (relative to source_root) for a literal text
-    match, returning matching lines with a little surrounding context.
-    Read-only, scoped to a single file the caller names rather than a
-    repo-wide search, to keep the tool's blast radius bounded. Every
-    result passes through masking/masker.py::mask_arbitrary_text before
-    it's ever appended to the conversation — this function itself returns
-    raw file content and must never be sent to the LLM unmasked."""
+    """Searches one file for a literal text match, with a little
+    surrounding context. Returns raw content -- caller must mask it
+    before sending to the LLM."""
     if not query:
         return "search_file error: query must not be empty"
 

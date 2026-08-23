@@ -27,10 +27,8 @@ class CostSummary:
 
 
 def load_cost_rows(jsonl_path: Path) -> list[CostRow]:
-    """Reads the per-candidate turns/input_tokens/output_tokens/latency_ms
-    fields already written by scripts/run_evaluation.py's _write_results —
-    the same results/*.jsonl files, read back here for cost analysis
-    instead of re-running the LLM."""
+    """Reads the per-candidate cost fields from a results/*.jsonl file
+    already written by run_evaluation.py."""
     rows = []
     for line in jsonl_path.read_text(encoding="utf-8").splitlines():
         if not line.strip():
@@ -49,9 +47,8 @@ def load_cost_rows(jsonl_path: Path) -> list[CostRow]:
 
 
 def compute_cost_summary(rows: list[CostRow]) -> CostSummary:
-    """Arm A is always 1 turn/call; Arm B's turns/tokens vary per candidate
-    depending on how much tool use the model chose to do — this is what
-    lets the two arms' cost be compared on the same terms."""
+    """Arm A is always 1 turn; Arm B's varies by how much tool use the
+    model chose to do."""
     if not rows:
         raise ValueError("cannot summarise cost over an empty result set")
 

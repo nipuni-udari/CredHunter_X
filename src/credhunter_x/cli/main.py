@@ -11,10 +11,7 @@ from credhunter_x.pipeline.orchestrator import scan_repository
 from credhunter_x.reporting.html_report import write_html_report
 from credhunter_x.reporting.sarif import write_sarif_report
 
-# Model-generated explanations can contain any Unicode character (smart
-# punctuation, em-dashes, etc.) — force UTF-8 stdout so output never
-# crashes on Windows' legacy console codepage (cp1252) regardless of what
-# a given provider's model happens to generate.
+# Force UTF-8 stdout so model output doesn't crash on Windows' cp1252 console.
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
@@ -32,9 +29,8 @@ def scan(
     ),
 ) -> None:
     """Scans PATH and prints one line per candidate. Exits non-zero if any
-    candidate is classified true_secret, or if any candidate couldn't be
-    classified at all (see --skipped below) — the signal a CI workflow
-    gates on to fail the check/block the merge."""
+    candidate is true_secret, or if any candidate couldn't be classified
+    at all."""
     settings = Settings()
     scan_config = load_scan_config()
     outcome = scan_repository(path, settings=settings, scan_config=scan_config)
@@ -57,11 +53,7 @@ def scan(
         typer.echo(f"    {r.explanation}")
 
     if outcome.skipped_count:
-        # A skipped candidate is neither "clean" nor "confirmed" -- it's
-        # unresolved. Reporting this scan as clean just because none of the
-        # *successfully classified* candidates were true_secret would let
-        # a real secret ride through silently, which is exactly what a
-        # fail-closed tool must never do (see ScanOutcome's docstring).
+        # Skipped != clean -- don't let an unresolved candidate look safe.
         typer.echo(
             f"\n{outcome.skipped_count} candidate(s) could not be classified "
             "(guard-blocked or unparseable model output) and are NOT reflected "

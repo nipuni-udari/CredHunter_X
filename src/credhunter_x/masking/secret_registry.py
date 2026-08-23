@@ -5,26 +5,18 @@ from dataclasses import dataclass, field
 
 from credhunter_x.models.candidate import Candidate
 
-_FRAGMENT_LEN = 16  # 8 was short enough to coincidentally collide with common
-# short boilerplate (code formatting, sequential dummy digits in test
-# fixtures) between two otherwise-unrelated secrets. 16 consecutive matching
-# characters is not something short structural/dummy text produces by
-# chance -- only an actual shared secret does. Values shorter than
-# FRAGMENT_LEN are still registered and matched whole, so short secrets
-# remain fully covered.
+# 8 was short enough to collide with unrelated boilerplate by chance; 16
+# consecutive matching characters isn't. Shorter values are still matched
+# whole.
+_FRAGMENT_LEN = 16
 _PEM_MARKER_RE = re.compile(r"^-----(BEGIN|END) [^-]+-----$")
 
 
 def _strip_pem_boilerplate(value: str) -> str:
-    """PEM header/footer marker lines (e.g. "-----BEGIN RSA PRIVATE KEY-----")
-    are identical, public format text shared by every key of that type — not
-    secret material. Left in fragments(), one key's boilerplate can collide
-    with a differently-formatted key's boilerplate (e.g. "-----END PRIVATE
-    KEY-----" vs "-----END RSA PRIVATE KEY-----" don't align at every 8-char
-    offset) and trip the guard on content that was never actually sensitive.
-    Stripped only for fragment generation — value_for() still returns the
-    full original value, markers included, since raw_permit / masking
-    replacement elsewhere need the exact matched text."""
+    """PEM header/footer lines are public format text, not secret
+    material -- left in fragments(), they'd trip the guard on content
+    that was never sensitive. Stripped only here; value_for() still
+    returns the full original value."""
     lines = value.split("\n")
     kept = [line for line in lines if not _PEM_MARKER_RE.match(line.strip())]
     return "\n".join(kept)
@@ -32,15 +24,10 @@ def _strip_pem_boilerplate(value: str) -> str:
 
 @dataclass
 class SecretRegistry:
-    """Holds every known real secret value across a batch (not just the
-    current candidate) — the leak guard checks outgoing payloads against
-    this, so it must be populated with everything a run could touch,
-    including secrets in other files an agentic tool call might pull in.
-
-    Keyed by candidate id (not just a flat set of values) so the guard's
-    raw-mode permit mechanism can look up "which value does this specific
-    candidate own" rather than permitting by value directly.
-    """
+    """Holds every known real secret value across a batch, not just the
+    current candidate -- the guard checks payloads against all of it.
+    Keyed by candidate id so raw-mode permit can look up which value a
+    specific candidate owns."""
 
     _values_by_candidate: dict[str, str] = field(default_factory=dict)
 
@@ -57,9 +44,8 @@ class SecretRegistry:
 
     def fragments(self) -> set[str]:
         """All contiguous FRAGMENT_LEN-character substrings of every
-        registered value's non-boilerplate content. Values shorter than
-        FRAGMENT_LEN are registered whole — they have no such substring, but
-        are still worth catching verbatim."""
+        registered value's non-boilerplate content. Shorter values are
+        registered whole."""
         result: set[str] = set()
         for value in self._values_by_candidate.values():
             stripped = _strip_pem_boilerplate(value)

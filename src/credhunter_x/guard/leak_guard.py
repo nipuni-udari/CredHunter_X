@@ -8,21 +8,9 @@ from credhunter_x.masking.secret_registry import SecretRegistry
 
 logger = logging.getLogger(__name__)
 
-# A PEM block whose own header names it a public key or certificate is not
-# secret material by definition -- public keys and certificates are meant to
-# be shared. Byte overlap with a private key's modulus (e.g. a certificate
-# embedding the public half of a key pair) is expected, harmless
-# cryptography, not a leak. The backreference ties BEGIN and END to the
-# exact same header text, so a "PUBLIC KEY" block can't be closed by an
-# unrelated "PRIVATE KEY" END marker. Deliberately does NOT match a block
-# whose own header says PRIVATE KEY, at any prefix -- a second, genuinely
-# different private key sharing fragments with the one under review is
-# exactly the leak this guard exists to catch, not a false positive to wave
-# through. This trusts the header text at face value rather than
-# cryptographically verifying the key relationship -- a reasonable
-# tradeoff scanning a known research dataset, not a defence against someone
-# deliberately crafting a fake header to smuggle a real secret past this
-# check.
+# CERTIFICATE/PUBLIC KEY blocks aren't secret -- byte overlap with a
+# private key's modulus is expected. Never matches PRIVATE KEY headers: a
+# second private key sharing bytes with the one under review is a real leak.
 _SAFE_PEM_BLOCK_RE = re.compile(
     r"-----BEGIN ([A-Z ]*?(?:CERTIFICATE|PUBLIC KEY))-----.*?-----END \1-----",
     re.DOTALL,
@@ -39,9 +27,8 @@ def _fully_within_any_span(start: int, end: int, spans: list[tuple[int, int]]) -
 
 class LeakGuard:
     """Fail-closed check run on every outgoing LLM payload. Composed into
-    GuardedLLMClient (Milestone 5), which intercepts every call a classifier
-    makes — production wiring should never construct an LLM client without
-    it (see the plan: "no code path that can obtain an unguarded client")."""
+    GuardedLLMClient, which intercepts every call a classifier makes --
+    production code should never construct an LLM client without it."""
 
     def __init__(self, registry: SecretRegistry) -> None:
         self._registry = registry
@@ -56,14 +43,10 @@ class LeakGuard:
     ) -> None:
         """Raises LeakError if `payload` contains a fragment of any
         registered secret. `raw_permit_candidate_id`, if given, excuses
-        fragments that belong to that one candidate's own value (the RAW
-        treatment's intended send) — every other candidate's secret is
-        still caught, including ones that share the same context window.
-
-        A fragment match that falls entirely inside a PEM block explicitly
-        labeled CERTIFICATE or PUBLIC KEY is also excused — see
-        _SAFE_PEM_BLOCK_RE. Any occurrence of the fragment outside such a
-        block still trips the guard, even if another occurrence is safe."""
+        only that candidate's own value -- every other candidate's secret
+        still trips it. A fragment fully inside a CERTIFICATE/PUBLIC KEY
+        PEM block is also excused (see _SAFE_PEM_BLOCK_RE); any occurrence
+        outside one still trips the guard."""
         if not self._registry:
             raise LeakError("LeakGuard registry is empty — refusing to permit any outbound call")
 

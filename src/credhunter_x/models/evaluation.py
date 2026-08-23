@@ -8,10 +8,8 @@ from credhunter_x.models.classification import ClassificationResult
 
 @dataclass(frozen=True)
 class EvalRow:
-    """One candidate joined against ground truth, plus its result from
-    whichever arms have been run against it (keyed by Arm string) — a dict
-    rather than fixed fields so partial evaluation runs (e.g. GitLeaks-only
-    first, arms added later) don't need a schema change."""
+    """One candidate joined against ground truth, plus results per arm.
+    A dict, not fixed fields, so partial runs don't need a schema change."""
 
     candidate: Candidate
     ground_truth_is_secret: bool
@@ -26,8 +24,6 @@ class MetricReport:
     precision: float
     recall: float
     f1: float
-    lost_count: int = 0  # candidates with no matching ground-truth row — excluded
-    # from precision/recall/F1 (matches CredData's own scoring convention),
-    # reported separately since it's still diagnostically important.
+    lost_count: int = 0  # no matching ground-truth row; excluded from precision/recall/F1
     mcnemar_stat: float | None = None
     mcnemar_p_value: float | None = None

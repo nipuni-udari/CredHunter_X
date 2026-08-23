@@ -9,13 +9,9 @@ _DEFAULT_LABELS_PATH = Path("data/processed/creddata_python_labels.csv")
 
 @dataclass(frozen=True)
 class GroundTruthRow:
-    """One row of CredData's own ground truth, already filtered to Python
-    files by scripts/filter_python_creddata.py. value_start/value_end use
-    -1 as CredData's own "no value" sentinel (see evaluation/labeler.py's
-    matching algorithm, ported from CredData's real scanner source) rather
-    than None — the raw dataset leaves these blank for non-True rows, but
-    the matching algorithm expects the same sentinel CredData itself uses
-    internally."""
+    """One row of CredData's ground truth, filtered to Python files.
+    value_start/value_end use -1 (not None) as CredData's own "no value"
+    sentinel, matching evaluation/labeler.py's expectations."""
 
     id: str
     file_id: str
@@ -30,9 +26,8 @@ class GroundTruthRow:
 
 
 def load_creddata_labels(path: Path = _DEFAULT_LABELS_PATH) -> list[GroundTruthRow]:
-    """Pure loader: reads the already-filtered CredData Python labels CSV
-    into ground-truth records. No network calls, no CredData-specific
-    parsing beyond this one flat file."""
+    """Reads the filtered CredData Python labels CSV into ground-truth
+    records."""
     if not path.exists():
         raise FileNotFoundError(
             f"{path} not found — run scripts/fetch_creddata.py and "

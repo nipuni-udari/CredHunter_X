@@ -51,10 +51,8 @@ def _fake_jwt(rng: random.Random, _real_value: str) -> str:
     return f"{header}.{payload}.{signature}"
 
 
-# Only rule types with a well-known, fixed canonical shape get a
-# format-correct fake generator -- the fake is that shape's real length,
-# not the real value's length, since e.g. every genuine AWS access key is
-# 20 characters regardless of what this particular one happened to be.
+# Fixed-shape fakes for rule types with a well-known canonical format --
+# the fake's length is that format's real length, not the real value's.
 _FAKE_GENERATORS: dict[str, Callable[[random.Random, str], str]] = {
     "aws-access-token": _fake_aws_access_token,
     "github-pat": _fake_github_pat,
@@ -65,12 +63,9 @@ _FAKE_GENERATORS: dict[str, Callable[[random.Random, str], str]] = {
 
 
 def _fake_from_charset(rng: random.Random, real_value: str) -> str:
-    """Fallback for rule types with no fixed canonical shape (private-key,
-    generic-api-key, anything unrecognised): a same-length, same-character-
-    class random string -- mirrors CredData's own third obfuscation method
-    ("random string generated matching the original's character set and
-    length"). Never touches real_value's actual characters, only its
-    length and character classes via classify_charset()."""
+    """Fallback for rule types with no fixed shape: a same-length,
+    same-charset random string, mirroring CredData's own obfuscation
+    method. Only reads real_value's length/charset, never its content."""
     charset = classify_charset(real_value)
     pools = [_CHARSET_POOLS[part] for part in ("A-Z", "a-z", "0-9", "symbols") if part in charset]
     alphabet = "".join(pools) or _ALNUM
@@ -78,11 +73,8 @@ def _fake_from_charset(rng: random.Random, real_value: str) -> str:
 
 
 def generate_fake_value(real_value: str, rule_id: str, *, rng: random.Random | None = None) -> str:
-    """A fake-but-realistic same-shape replacement for real_value, used by
-    the pseudonymised treatment: the model sees text that looks like a real
-    credential of this type, but nothing real. rng defaults to a fresh,
-    unseeded generator -- production runs should not be predictable; tests
-    inject a seeded random.Random for determinism."""
+    """A fake-but-realistic same-shape replacement for real_value. rng
+    defaults to a fresh unseeded generator; tests inject a seeded one."""
     rng = rng or random.Random()
     generator = _FAKE_GENERATORS.get(rule_id, _fake_from_charset)
     return generator(rng, real_value)

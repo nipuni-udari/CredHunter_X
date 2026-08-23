@@ -6,9 +6,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-# gitleaks' own convention: 0 = scan ran, no leaks found; 1 = scan ran,
-# leaks found. Both are normal outcomes for us, not errors — only some
-# other exit code means the gitleaks process itself actually failed.
+# gitleaks: 0 = no leaks, 1 = leaks found. Both are fine; anything else is a real failure.
 _OK_EXIT_CODES = {0, 1}
 
 
@@ -19,10 +17,8 @@ class GitleaksError(RuntimeError):
 def run_gitleaks(source: Path, gitleaks_binary: str = "gitleaks") -> list[dict[str, Any]]:
     """Scan `source` with gitleaks and return the raw list of finding dicts
     from its JSON report (empty list if nothing found)."""
-    # Resolve to absolute first: gitleaks reports the "File" field relative
-    # to whatever --source was given as, so a relative --source would make
-    # "File" ambiguous relative-to-what for the parser. Always resolving
-    # here means "File" in the report is always absolute.
+    # Resolve first so gitleaks' "File" field is always absolute, never
+    # ambiguous relative-to-what.
     source = source.resolve()
 
     with tempfile.TemporaryDirectory() as tmp:

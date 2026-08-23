@@ -25,11 +25,9 @@ class ToolCall:
 
 @dataclass(frozen=True)
 class LLMToolResponse:
-    """Result of one turn in a tool-calling conversation. `text` is the
-    model's final answer when `tool_calls` is empty; when `tool_calls` is
-    non-empty, `text` may be empty or a short aside and the caller must
-    dispatch the tool calls and continue the conversation rather than
-    treating this as a final answer."""
+    """One turn in a tool-calling conversation. `text` is the final answer
+    only when `tool_calls` is empty; otherwise the caller must dispatch
+    the tool calls and continue."""
 
     text: str
     tool_calls: list[ToolCall] = field(default_factory=list)
@@ -40,10 +38,8 @@ class LLMToolResponse:
 
 class LLMClient(Protocol):
     """Every classifier depends on this Protocol, never a concrete provider.
-    The guard-related keyword args live on the interface itself (not just
-    GuardedLLMClient) so classifiers always pass candidate context through
-    regardless of which concrete client they're holding — an unguarded
-    client just accepts and ignores them."""
+    Guard-related kwargs live here too so classifiers always pass them
+    through; an unguarded client just ignores them."""
 
     def generate(
         self,
@@ -64,10 +60,7 @@ class LLMClient(Protocol):
         rule_id: str = "",
         raw_permit_candidate_id: str | None = None,
     ) -> LLMToolResponse:
-        """messages/tools use the OpenAI chat-completions message and
-        function-calling schema — the common format litellm normalises
-        every provider to. The guard checks the ENTIRE serialised message
-        history on every call (see guarded_client.py), not just the latest
-        message, so an unmasked tool result appended earlier is still
-        caught on the next turn."""
+        """messages/tools use the OpenAI chat-completions/function-calling
+        schema. The guard checks the whole message history every call, not
+        just the latest message."""
         ...

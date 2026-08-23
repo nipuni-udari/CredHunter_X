@@ -25,18 +25,10 @@ _SEVERITY_TO_LEVEL: dict[Severity, str] = {
 
 
 def build_sarif_report(results: list[ScanResult]) -> dict[str, Any]:
-    """Builds a SARIF 2.1.0 document for GitHub code scanning.
-
-    Only true_secret and uncertain findings become SARIF results —
-    false_positive is deliberately excluded. Surfacing every gitleaks
-    candidate regardless of the LLM's own verdict would just reproduce the
-    exact alert-fatigue problem this project exists to reduce (RQ1); a
-    security gate that flags everything gitleaks flags provides no benefit
-    over gitleaks alone. uncertain findings still get surfaced (as "note",
-    regardless of the model's reported severity, since severity is only
-    meaningful when the model actually believes it's a real secret) so a
-    genuinely ambiguous case isn't silently dropped either.
-    """
+    """Builds a SARIF 2.1.0 document for GitHub code scanning. Only
+    true_secret and uncertain become results -- false_positive is
+    excluded, or this would just reproduce GitLeaks' own alert-fatigue
+    problem. uncertain is always "note" level regardless of severity."""
     included = [
         r for r in results if r.classification.label in (Label.TRUE_SECRET, Label.UNCERTAIN)
     ]

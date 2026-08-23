@@ -109,12 +109,9 @@ _TOOL_SCHEMAS: list[dict[str, Any]] = [
 
 class AgenticClassifier:
     """Arm B: a turn-capped loop where the LLM can call tools before
-    answering, instead of Arm A's single fixed prompt. Every tool result is
-    masked (against every known candidate, not just the one under review —
-    a tool call can pull in content from anywhere in the repo) before it's
-    appended to the conversation; the guard independently re-checks the
-    full message history on every call regardless, as a second layer that
-    doesn't depend on this masking step being correct."""
+    answering. Every tool result is masked against all known candidates
+    before being appended to the conversation; the guard re-checks the
+    full history on every call anyway, as a second layer."""
 
     def __init__(
         self, client: LLMClient, source_root: Path, all_candidates: list[Candidate]
@@ -135,16 +132,9 @@ class AgenticClassifier:
 
         for turn in range(1, _MAX_TURNS + 1):
             if turn == _MAX_TURNS:
-                # Withdrawing the tools list entirely on the last turn
-                # sounds like the obvious way to force a final answer, but
-                # some providers (verified live against Groq) reject the
-                # request outright if the model still attempts a tool call
-                # with none on offer -- once tool_calls exist earlier in
-                # the conversation, the model can keep reaching for one
-                # regardless. A text nudge is weaker but doesn't risk a
-                # hard API error; if the model calls a tool anyway, the
-                # loop just runs out of turns and falls through to the
-                # UNCERTAIN fallback below instead of crashing.
+                # Dropping the tools list here would be cleaner, but Groq
+                # errors out if tool_calls already happened and none are
+                # on offer. A text nudge is weaker but won't crash the call.
                 messages.append(
                     {
                         "role": "user",
@@ -181,12 +171,9 @@ class AgenticClassifier:
                 (tc for tc in response.tool_calls if tc.name == _SUBMIT_TOOL_NAME), None
             )
             if submission is not None:
-                # Some models (verified live against Groq) prefer routing
-                # structured output through tool-calling even when asked
-                # for plain text -- rather than fight that, submit_classification
-                # is a real tool with the schema, so a call to it IS the
-                # final answer, sourced from its arguments instead of
-                # response.text.
+                # Some models route structured output through tool-calling
+                # even when asked for plain text, so a call to this tool
+                # counts as the final answer.
                 return self._finalise(
                     candidate,
                     context,
@@ -214,9 +201,7 @@ class AgenticClassifier:
                     {"role": "tool", "tool_call_id": tool_call.id, "content": masked_result}
                 )
 
-        # Turn cap reached without a final answer, even after the forced
-        # no-tools last turn -- fail safe with an explicit UNCERTAIN result
-        # rather than crash the batch or silently drop the candidate.
+        # Ran out of turns -- fail safe with UNCERTAIN instead of crashing.
         return ClassificationResult(
             candidate_id=candidate.id,
             arm="agentic",

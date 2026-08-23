@@ -117,8 +117,7 @@ def build_classification_prompt(candidate: Candidate, context: SanitisedContext)
 
 
 def build_agentic_prompt(candidate: Candidate, context: SanitisedContext) -> str:
-    """Arm B's initial prompt — same task framing and context sections as
-    Arm A, but with the tool-usage addendum in place of an immediate
-    response contract, since the model may call tools before answering."""
+    """Arm B's initial prompt -- same framing as Arm A, but with the
+    tool-usage addendum instead of an immediate response contract."""
     sections = [_TASK_DESCRIPTION, _AGENTIC_ADDENDUM, *_context_sections(candidate, context)]
     return "\n\n".join(sections)

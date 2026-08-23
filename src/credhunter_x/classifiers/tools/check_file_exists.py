@@ -5,9 +5,7 @@ from pathlib import Path
 
 def check_file_exists(source_root: Path, file_path: str) -> str:
     """Checks whether `file_path` (relative to source_root) exists in the
-    repository being scanned — e.g. to verify whether a config file a
-    candidate claims to load actually exists, rather than trusting the
-    code's own comments/naming."""
+    scanned repo."""
     resolved_root = source_root.resolve()
     target = (source_root / file_path).resolve()
     try:

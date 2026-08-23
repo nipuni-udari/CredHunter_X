@@ -12,16 +12,9 @@ from pydantic import BaseModel
 from credhunter_x.llm.client import LLMResponse, LLMToolResponse, ToolCall
 from credhunter_x.llm.schema import ClassificationSchema
 
-# Purely cosmetic, not an error suppression: with an "openrouter/..." model
-# string, litellm internally re-derives a provider from the *response's*
-# own model field (e.g. "google/gemma-4-26b-a4b-it", OpenRouter's naming,
-# not litellm's "gemini"/"vertex_ai" provider prefixes) for its own
-# post-call bookkeeping. That inner lookup can't resolve "google" and
-# prints litellm's "Provider List" banner before litellm itself discards
-# the failure -- see get_llm_provider_logic.py's suppress_debug_info
-# check. Every call still succeeds either way; this only silences litellm's
-# own noisy diagnostic print, and is litellm's own documented flag for
-# exactly that, not a change to any error handling here.
+# Silences litellm's noisy "Provider List" debug print (an internal,
+# harmless provider lookup fails for openrouter/* models) -- litellm's own
+# documented flag for it, not an error-handling change.
 litellm.suppress_debug_info = True
 
 _MAX_ATTEMPTS = 5
@@ -35,20 +28,12 @@ class LiteLLMClientError(RuntimeError):
 
 
 class LiteLLMClient:
-    """Thin wrapper around litellm.completion() — the single LLM adapter
-    for the whole project. litellm already knows how to talk to ~100+
-    providers from one "provider/model" string (e.g.
-    "gemini/gemini-flash-latest", "groq/openai/gpt-oss-120b",
-    "anthropic/claude-sonnet-5"), so switching providers is a config
-    change (config/settings.py's llm_model + llm_api_key), never a new
-    adapter file. Never constructed unwrapped in production code; see
-    llm/guarded_client.py.
+    """Thin wrapper around litellm.completion() -- the single LLM adapter
+    for the whole project. Switching providers is a config change, never a
+    new adapter file. Never construct this unwrapped; see guarded_client.py.
 
-    Rate-limit (429) and service-unavailable (503) responses are
-    transient, so they're retried with exponential backoff up to
-    _MAX_ATTEMPTS. Every other error (bad key, malformed request, etc.)
-    fails immediately — retrying something that can never succeed would
-    just waste time."""
+    Rate-limit/service-unavailable errors are retried with backoff up to
+    _MAX_ATTEMPTS; everything else fails immediately."""
 
     def __init__(self, model: str, api_key: str) -> None:
         if not model or not api_key:
@@ -74,8 +59,7 @@ class LiteLLMClient:
         )
         latency_ms = (time.monotonic() - start) * 1000
 
-        # usage is set at runtime but not a statically-declared attribute
-        # on ModelResponse, so mypy can't see it via normal attribute access
+        # mypy can't see `usage` via normal attribute access on ModelResponse
         usage = getattr(response, "usage", None)
         return LLMResponse(
             text=response.choices[0].message.content or "",
@@ -96,12 +80,9 @@ class LiteLLMClient:
         # guard-only metadata, irrelevant to the raw API call
         del candidate_id, rule_id, raw_permit_candidate_id
         start = time.monotonic()
-        # No response_format here, deliberately: mixing forced JSON schema
-        # output with tool-calling isn't reliably supported the same way
-        # across every provider litellm fronts. The agentic prompt instead
-        # asks in plain language for schema-matching JSON once no more
-        # tools are needed -- parse_classification validates that text the
-        # same way it validates Arm A's structured output.
+        # No response_format: forced JSON schema + tool-calling isn't
+        # reliable across providers. The prompt asks for schema-matching
+        # JSON in plain language instead once no more tools are needed.
         call_kwargs: dict[str, Any] = {"messages": messages}
         if tools:
             call_kwargs["tools"] = tools

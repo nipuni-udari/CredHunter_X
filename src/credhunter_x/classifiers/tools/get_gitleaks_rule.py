@@ -1,10 +1,6 @@
 from __future__ import annotations
 
-# A small static lookup, not a live query against gitleaks itself -- gitleaks
-# has no CLI for printing one rule's description, and the project only needs
-# the rule types this dataset's candidates actually carry (see rule_id
-# breakdown in the evaluation reports). Covers a few other common rule_ids
-# too, for generality beyond this specific dataset.
+# Static lookup -- gitleaks has no CLI for printing a rule's description.
 _RULE_DESCRIPTIONS: dict[str, str] = {
     "aws-access-token": (
         "Matches AWS access key ID format (AKIA/ASIA prefix + 16 alphanumeric "
@@ -44,10 +40,7 @@ _DEFAULT = (
 
 
 def get_gitleaks_rule(rule_id: str) -> str:
-    """Looks up what a GitLeaks rule actually checks for, so the model can
-    judge how much a match on this specific rule is worth trusting on its
-    own (a format-specific match like aws-access-token is stronger evidence
-    than a broad heuristic like generic-api-key)."""
+    """Looks up what a GitLeaks rule actually checks for."""
     if not rule_id:
         return "get_gitleaks_rule error: rule_id must not be empty"
     return _RULE_DESCRIPTIONS.get(rule_id, f"{rule_id}: {_DEFAULT}")

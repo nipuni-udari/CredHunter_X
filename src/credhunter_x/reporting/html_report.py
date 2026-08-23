@@ -43,16 +43,10 @@ code { background: #f4f4f4; padding: 0.1rem 0.3rem; border-radius: 3px;
 
 
 def build_html_report(results: list[ScanResult]) -> str:
-    """Builds a self-contained developer-facing HTML report. All findings
-    are shown, not just true_secret -- unlike the SARIF report (which
-    deliberately excludes false_positive to avoid reproducing GitLeaks'
-    own alert-fatigue problem in GitHub's code scanning UI), a human
-    reading this page benefits from seeing what was reviewed and why it
-    was dismissed, which is part of what makes an LLM explanation useful
-    over a bare pattern match. Every value interpolated from candidate/
-    classification data is HTML-escaped -- explanations and remediation
-    text are model-generated free text and file paths come from a
-    scanned repo, neither of which is trusted input."""
+    """Builds a self-contained developer-facing HTML report. Shows every
+    finding, including dismissed false positives, unlike the SARIF report.
+    Everything interpolated is HTML-escaped -- explanations and file paths
+    both come from untrusted, LLM/repo-generated content."""
     counts = {label: 0 for label in Label}
     for result in results:
         counts[result.classification.label] += 1

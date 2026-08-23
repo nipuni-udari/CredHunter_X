@@ -38,13 +38,9 @@ class ScanResult:
 
 @dataclass(frozen=True)
 class ScanOutcome:
-    """scan_repository()'s return type. Separate from the bare
-    list[ScanResult] classify_candidates() returns, specifically so a
-    caller can tell "gitleaks found nothing" apart from "gitleaks found
-    something but couldn't get a verdict on it" — collapsing those two into
-    an empty list would let a CI check report a repo clean when it was
-    actually incomplete, which is the one thing a fail-closed scanner must
-    never do."""
+    """scan_repository()'s return type -- lets a caller tell "gitleaks
+    found nothing" apart from "found something but couldn't classify it,"
+    so a CI check never reports an incomplete scan as clean."""
 
     results: list[ScanResult]
     skipped_count: int
@@ -59,24 +55,14 @@ def scan_repository(
     skip_candidate_on_error: bool = True,
 ) -> ScanOutcome:
     """Single wiring point: gitleaks -> masking -> classifier. This is what
-    the CLI calls (scripts/run_evaluation.py calls classify_candidates()
-    directly instead, to reuse one gitleaks pass/registry across many
-    treatments). LiteLLMClient/GuardedLLMClient are constructed only here,
-    always wrapped together — no caller can obtain an unguarded client.
+    the CLI calls; run_evaluation.py calls classify_candidates() directly
+    to reuse one gitleaks pass across treatments. LiteLLMClient/
+    GuardedLLMClient are always constructed together here -- no caller can
+    get an unguarded client.
 
-    skip_candidate_on_error defaults to True here (unlike
-    classify_candidates' own default of False) because this is the
-    unattended, CI-facing path: one candidate hitting a malformed/empty
-    model response must not crash the whole scan and leave a CI check with
-    no report at all — see classify_candidates' own docstring for exactly
-    which two error types this covers and why neither is a safety
-    concession. A caller that genuinely wants a hard failure on any error
-    (e.g. debugging) can still pass skip_candidate_on_error=False.
-
-    Returns a ScanOutcome rather than the bare list classify_candidates()
-    returns, so the caller can see how many candidates gitleaks found but
-    couldn't get classified — see ScanOutcome's own docstring for why that
-    distinction matters."""
+    skip_candidate_on_error defaults True here (unlike classify_candidates'
+    False) since this is the unattended CI path -- one bad model response
+    shouldn't crash the whole scan. Pass False for a hard failure instead."""
     findings = run_gitleaks(source, gitleaks_binary=settings.gitleaks_binary_path)
     candidates = parse_gitleaks_report(findings, source, repo_id=repo_id)
     results = classify_candidates(
@@ -98,39 +84,20 @@ def classify_candidates(
     delay_seconds: float = 0.0,
     skip_candidate_on_error: bool = False,
 ) -> list[ScanResult]:
-    """Masking + classification over an already-discovered candidate list —
-    the shared tail of scan_repository(), factored out so
-    scripts/run_evaluation.py can classify a pre-filtered CredData slice
-    without re-running gitleaks or duplicating the guard/registry wiring.
+    """Masking + classification over an already-discovered candidate list
+    -- the shared tail of scan_repository(), factored out so
+    run_evaluation.py can classify a pre-filtered slice without re-running
+    gitleaks.
 
-    source_root is only actually used by Arm B (its tools read files from
-    disk) but is required unconditionally, since which classifier gets
-    built is decided by scan_config.mode inside this function, not by the
-    caller.
+    delay_seconds paces LLM calls for bulk runs against rate limits
+    (default 0, no effect on a normal single-repo scan).
 
-    delay_seconds paces successive LLM calls (default 0, so scan_repository/
-    the CLI's normal single-repo scan is unaffected) — bulk evaluation runs
-    over many candidates can exceed a provider's tokens-per-minute budget
-    faster than the client's own retry/backoff can recover from, so
-    scripts/run_evaluation.py passes a nonzero value there.
-
-    skip_candidate_on_error (default False, so scan_repository/the CLI's
-    normal behaviour is unchanged) lets scripts/run_evaluation.py opt in to
-    excluding just the offending candidate from the returned results
-    instead of letting the whole batch abort. Two error types are caught:
-
-    - LeakError: does not weaken the guard itself — the call that would
-      have leaked a fragment still aborts, nothing is ever sent, and the
-      block is still logged at ERROR by LeakGuard.check() before this
-      catches it. It only changes what happens *after* that abort — move
-      on to the next candidate instead of crashing the process — which
-      matters for Arm B, where a tool call can legitimately pull in a
-      paired public key/certificate's overlapping bytes from outside a
-      candidate's fixed context window (see scripts/run_evaluation.py).
-    - LLMParsingError: no safety concern at all, just a malformed/
-      unparseable final answer from the model for that one candidate
-      (e.g. a stray chat-template token instead of JSON) — excluding it
-      is a pure availability trade-off, not a guard decision."""
+    skip_candidate_on_error (default False) excludes just the offending
+    candidate instead of aborting the whole batch, for two error types:
+    LeakError (the call still aborted and got logged -- this only decides
+    what happens after, not whether the guard fires) and LLMParsingError
+    (a malformed final answer, a pure availability trade-off, no safety
+    angle)."""
     if not candidates:
         return []
 

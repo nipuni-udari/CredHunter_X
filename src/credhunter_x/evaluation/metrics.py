@@ -11,17 +11,11 @@ from credhunter_x.models.evaluation import MetricReport
 def compute_metrics(
     outcomes: list[MatchOutcome], *, total_true_count: int, arm: str, treatment: str
 ) -> MetricReport:
-    """precision/recall/F1 from matched outcomes, following CredData's own
-    scoring convention (verified against their real
-    benchmark/common/result.py and benchmark/scanner/scanner.py): LOST is
-    excluded entirely from both precision's and recall's numerator and
-    denominator — it's a diagnostic count, not a false positive.
-
-    total_true_count is the count of GroundTruth=='T' rows across the
-    WHOLE labelled dataset, independent of what became a candidate at all
-    — this is what makes recall capture secrets the scanner never
-    generated a candidate for in the first place, not just wrong
-    downstream judgments on candidates it did generate."""
+    """precision/recall/F1 from matched outcomes, matching CredData's own
+    scoring: LOST is excluded entirely, not counted as a false positive.
+    total_true_count is every GroundTruth=='T' row in the dataset, not
+    just what became a candidate -- so recall reflects secrets the
+    scanner never even flagged."""
     counts = Counter(outcomes)
     true_positive = counts[MatchOutcome.TRUE_POSITIVE]
     false_positive = counts[MatchOutcome.FALSE_POSITIVE]
@@ -44,15 +38,11 @@ def compute_metrics(
 
 
 def mcnemar_test(correct_a: list[bool], correct_b: list[bool]) -> tuple[float, float]:
-    """Continuity-corrected McNemar's test comparing two arms' per-candidate
-    correctness on the SAME paired candidates (same order, same length —
-    e.g. gitleaks-only vs Arm A over identical candidates). scipy has no
-    built-in mcnemar() function — the statistic is computed by hand and
-    cross-checked against scipy.stats.chi2 for the p-value, per the plan.
-
-    Returns (0.0, 1.0) when there's no discordant pair — the test is
-    undefined in that case (both arms agree on every candidate), not
-    evidence of "no difference" in the usual statistical sense."""
+    """Continuity-corrected McNemar's test on paired per-candidate
+    correctness (same order, same length). scipy has no built-in
+    mcnemar(), so the statistic's hand-computed and only the p-value
+    lookup uses scipy.stats.chi2. Returns (0.0, 1.0) if there's no
+    discordant pair -- undefined, not "no difference"."""
     if len(correct_a) != len(correct_b):
         raise ValueError("correct_a and correct_b must be the same length (paired candidates)")
 
@@ -69,15 +59,10 @@ def mcnemar_test(correct_a: list[bool], correct_b: list[bool]) -> tuple[float, f
 
 
 def cohens_kappa(rater_a: list[object], rater_b: list[object]) -> float:
-    """Inter-rater agreement between two raters over the same items,
-    correcting for chance agreement — used to validate the automated
-    remediation element-checker against a human's hand-scored sample
-    (RQ3). po = observed agreement rate; pe = agreement expected by
-    chance alone, from each rater's own marginal category distribution.
-
-    Returns 1.0 for the degenerate case where every item shares a single
-    category (po==pe==1, the formula's 0/0) — perfect, trivial agreement,
-    not an undefined result."""
+    """Inter-rater agreement, corrected for chance. po = observed
+    agreement, pe = agreement expected by chance from each rater's own
+    category distribution. Returns 1.0 for the degenerate 0/0 case
+    (everyone agrees on one category)."""
     if len(rater_a) != len(rater_b):
         raise ValueError("rater_a and rater_b must be the same length (paired items)")
     if not rater_a:
@@ -95,16 +80,11 @@ def cohens_kappa(rater_a: list[object], rater_b: list[object]) -> float:
 
 
 def fleiss_kappa(ratings: list[list[object]]) -> float:
-    """Agreement among a FIXED NUMBER of raters (not necessarily the same
-    named raters across items) over N items, each landing on one of k
-    categories — used to measure the model's OWN stability across
-    repeated calls on identical input (RQ3's consistency check), not
-    agreement between two specific raters (see cohens_kappa for that).
-
-    ratings[i] is every rater's category for item i; every item must have
-    the same rater count (>= 2). Returns 1.0 for the degenerate case
-    where every rater picks from a single category across every item
-    (p_bar==p_e_bar==1, the formula's 0/0)."""
+    """Agreement among a fixed number of raters per item (unlike
+    cohens_kappa's two named raters) -- used for the model's own
+    stability across repeated calls. ratings[i] is every rater's category
+    for item i; every item needs the same rater count (>= 2). Returns 1.0
+    for the degenerate 0/0 case."""
     if not ratings:
         raise ValueError("cannot compute kappa over an empty rating set")
 
@@ -138,16 +118,9 @@ def fleiss_kappa(ratings: list[list[object]]) -> float:
 def wilson_score_interval(
     successes: int, n: int, *, confidence: float = 0.95
 ) -> tuple[float, float]:
-    """Binomial-proportion confidence interval for a pass rate (RQ3's
-    remediation quality check against its 80% target) — preferred over a
-    naive Wald interval (p_hat +/- z*se) since it stays within [0,1] and
-    behaves better at the small-n, extreme-proportion end this project
-    actually has (a rule_id with only a handful of scored candidates). z
-    is looked up via scipy.stats.norm.ppf rather than hardcoding 1.96, so
-    a non-default confidence level still gets a correct z, matching
-    mcnemar_test's own convention of hand-computing the interval
-    arithmetic but reaching for scipy for the one piece that's genuinely
-    a distribution-tail lookup."""
+    """Binomial-proportion CI for a pass rate. Wilson, not a naive Wald
+    interval -- stays within [0,1] and holds up better at small n. z comes
+    from scipy.stats.norm.ppf rather than hardcoding 1.96."""
     if n <= 0:
         raise ValueError("n must be positive")
     if not 0 <= successes <= n:

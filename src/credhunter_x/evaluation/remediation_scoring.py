@@ -31,11 +31,8 @@ def parse_element_check(
     rule_id: str,
     required_elements: list[str],
 ) -> ElementCheckResult:
-    """Mirrors llm/parsing.py::parse_classification's shape, plus one
-    validation rule that has no analogue there: element_present's length
-    must match required_elements' length, since the schema is positional
-    (see ElementCheckSchema) — a model that returns the wrong count has
-    given an unusable answer, not just a differently-shaped one."""
+    """Mirrors parse_classification, plus one extra check: the schema is
+    positional, so element_present's length must match required_elements'."""
     try:
         data = ElementCheckSchema.model_validate_json(response.text)
     except (ValidationError, json.JSONDecodeError) as exc:

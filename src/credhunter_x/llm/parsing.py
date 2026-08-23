@@ -21,9 +21,8 @@ def parse_classification(
     arm: Arm,
     treatment: Treatment,
 ) -> ClassificationResult:
-    """The only place model output turns into a ClassificationResult — both
-    arms call this on their final answer. Malformed or missing-field output
-    raises a typed error rather than crashing the batch."""
+    """The only place model output turns into a ClassificationResult.
+    Malformed output raises a typed error instead of crashing."""
     try:
         data = ClassificationSchema.model_validate_json(response.text)
     except (ValidationError, json.JSONDecodeError) as exc:

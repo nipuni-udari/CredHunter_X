@@ -8,9 +8,8 @@ the same substantive action is covered."""
 
 
 def build_element_check_prompt(remediation: str, required_elements: list[str]) -> str:
-    """Numbers required_elements 1..N in the prompt text; asks for a JSON
-    array of N booleans in that same order — see ElementCheckSchema,
-    which this prompt's response is validated against."""
+    """Numbers required_elements 1..N; asks for a JSON array of N booleans
+    in that order, matching ElementCheckSchema."""
     numbered = "\n".join(f"{i}. {element}" for i, element in enumerate(required_elements, start=1))
     contract = (
         f'Respond with a JSON object: {{"element_present": [...]}} — an array of exactly '

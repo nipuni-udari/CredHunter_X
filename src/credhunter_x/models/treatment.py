@@ -23,9 +23,7 @@ class SecretMetadata:
 @dataclass(frozen=True)
 class MaskedSpan:
     """One masked secret within a context window. Carries its own metadata
-    rather than SanitisedContext holding a single shared one, since a
-    context window can contain several distinct secrets that must not be
-    conflated into one placeholder."""
+    since a window can hold several distinct secrets."""
 
     start: int
     end: int

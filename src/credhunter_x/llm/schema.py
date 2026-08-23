@@ -6,9 +6,8 @@ from credhunter_x.models.classification import Label, Severity
 
 
 class ClassificationSchema(BaseModel):
-    """The exact JSON shape requested from the model via Gemini's
-    response_schema structured-output mode — also the only shape
-    llm/parsing.py ever parses a response against."""
+    """The exact JSON shape requested via structured-output mode -- the
+    only shape parsing.py ever validates against."""
 
     label: Label
     confidence: float
@@ -18,12 +17,8 @@ class ClassificationSchema(BaseModel):
 
 
 class ElementCheckSchema(BaseModel):
-    """RQ3's remediation element-checker output. Positional, aligned 1:1
-    with a NUMBERED required_elements list in the prompt (same order) —
-    deliberately not a dict keyed by element text, which would map to an
-    open JSON-schema object that structured-output modes handle far less
-    reliably than a closed array, and would depend on the model echoing
-    element text back verbatim as dict keys. See
-    llm/element_check_prompts.py and evaluation/remediation_scoring.py."""
+    """RQ3's element-checker output. Positional, matching the numbered
+    required_elements list order -- not a dict keyed by element text,
+    which structured-output modes handle less reliably."""
 
     element_present: list[bool]

@@ -16,9 +16,8 @@ class SinglePromptClassifier:
 
     def classify(self, candidate: Candidate, context: SanitisedContext) -> ClassificationResult:
         prompt = build_classification_prompt(candidate, context)
-        # raw_permit is scoped to this candidate's own id, and only set at
-        # all when this call is genuinely sending a raw value — the guard
-        # still catches any other candidate's secret in the same window.
+        # Only permits this candidate's own value; the guard still catches
+        # any other candidate's secret in the same window.
         raw_permit = candidate.id if context.treatment == Treatment.RAW else None
         response = self._client.generate(
             prompt,

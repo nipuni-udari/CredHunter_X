@@ -18,10 +18,8 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-    # litellm-style "provider/model" string (e.g. "openai/gpt-5.2-mini",
-    # "anthropic/claude-sonnet-5") plus the one API key for whichever
-    # provider that selects. Switching providers is a config change only —
-    # llm/litellm_client.py is the single adapter for every provider.
+    # litellm-style "provider/model" string, e.g. "anthropic/claude-sonnet-5".
+    # Switching providers is a config change, not a code change.
     llm_model: str = "gemini/gemini-flash-latest"
     llm_api_key: str = ""
     gitleaks_binary_path: str = "gitleaks"
@@ -34,29 +32,17 @@ class Mode(StrEnum):
 
 class ScanConfig(BaseModel):
     """User-selectable scan behaviour, loaded from .secretscan.yml.
-
-    Defaults to the privacy-safe choice on treatment — raw must be opted
-    into explicitly and is never the shipped default — and to the more
-    thorough arm on mode: agentic is the shipped default a CI workflow gets
-    if it doesn't set `mode` at all, since a workflow gate cares more about
-    catching real secrets than about the extra tokens/latency a single
-    prompt saves. Both remain user-selectable via .secretscan.yml.
-    """
+    Defaults to masked (raw must be opted in) and agentic (more thorough,
+    worth the extra cost for a CI gate)."""
 
     mode: Mode = Mode.AGENTIC
     treatment: Treatment = Treatment.MASKED
 
 
 def load_scan_config(path: Path = Path(".secretscan.yml")) -> ScanConfig:
-    """Loads user-selectable behaviour for the shipped CLI. `treatment` is
-    deliberately not one of those user-selectable things — the research
-    scope document's own .secretscan.yml example only ever shows `mode`,
-    and raw treatment is explicitly "never used in the shipped tool." Any
-    `treatment` key in the file is ignored so the CLI path always resolves
-    to ScanConfig's default (masked) regardless of what a repo's config
-    file says — only Python callers (e.g. the research evaluation harness)
-    can request a different treatment, by constructing ScanConfig directly.
-    """
+    """Loads scan behaviour for the shipped CLI. `treatment` isn't
+    user-configurable here -- always masked, regardless of what the file
+    says; only Python callers can request otherwise."""
     if not path.exists():
         return ScanConfig()
     data = yaml.safe_load(path.read_text()) or {}

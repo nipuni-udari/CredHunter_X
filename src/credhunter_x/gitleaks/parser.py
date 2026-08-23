@@ -13,22 +13,10 @@ def parse_gitleaks_report(
     context_lines: int = 10,
 ) -> list[Candidate]:
     """Convert gitleaks' raw JSON findings into Candidate objects.
-
-    file_path is made relative to source_root (POSIX-style) so it matches
-    the convention ground-truth datasets (e.g. CredData) use, rather than
-    gitleaks' own absolute path. repo_id is caller-supplied rather than
-    guessed from path structure, since what "repo" means is only meaningful
-    in specific contexts (e.g. the CredData evaluation harness knows it;  a
-    plain CLI scan of a user's folder doesn't have one).
-
-    value_start/value_end are derived by searching for matched_value within
-    its own line rather than trusting gitleaks' own StartColumn/EndColumn —
-    verified empirically (against this project's own fixtures) to sometimes
-    be wrong (e.g. one rule's EndColumn equalled the line's total length,
-    not the secret's actual end). matched_value itself is always correct,
-    so an exact string search against it is reliable where the reported
-    columns are not.
-    """
+    file_path is relative to source_root (POSIX-style), matching CredData's
+    own convention. value_start/value_end come from searching for
+    matched_value in its own line rather than trusting gitleaks'
+    StartColumn/EndColumn, which we've seen be wrong."""
     source_root = source_root.resolve()
     file_cache: dict[Path, list[str]] = {}
     candidates = []
