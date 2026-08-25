@@ -89,6 +89,24 @@ def classify_candidates(
     run_evaluation.py can classify a pre-filtered slice without re-running
     gitleaks.
 
+    The guard's secret registry holds only the candidate currently being
+    classified, not its neighbours -- a wider registry would raise LeakError
+    (and, with skip_candidate_on_error, silently drop the candidate from
+    the report) whenever one candidate's context happens to contain another
+    candidate's registered value, real secret or not. Two candidates in the
+    same repo can legitimately share a value that isn't even a secret (a
+    hash, a boilerplate test fixture) and dropping either of them from the
+    report over that is wrong -- every gitleaks/trufflehog finding should
+    reach the LLM and show up in the report on its own merits. This only
+    narrows the guard's own blocking check; bystander masking in the
+    context builders and in the agentic classifier's tool-result masking
+    (see AgenticClassifier) is unrelated and still sees every other
+    candidate in the same repo, since that only blanks out text and never
+    causes a candidate to be dropped.
+
+    Results are returned in the same order as `candidates` regardless of
+    internal per-repo grouping.
+
     delay_seconds paces LLM calls for bulk runs against rate limits
     (default 0, no effect on a normal single-repo scan).
 
@@ -101,48 +119,58 @@ def classify_candidates(
     if not candidates:
         return []
 
-    registry = SecretRegistry()
-    registry.register_candidates(candidates)
-    guard = LeakGuard(registry)
     llm_client = LiteLLMClient(model=settings.llm_model, api_key=settings.llm_api_key)
-    client = GuardedLLMClient(llm_client, guard)
 
-    classifier: SinglePromptClassifier | AgenticClassifier
-    if scan_config.mode == Mode.SINGLE:
-        classifier = SinglePromptClassifier(client)
-    elif scan_config.mode == Mode.AGENTIC:
-        classifier = AgenticClassifier(client, source_root, candidates)
-    else:
-        raise NotImplementedError(f"scan mode {scan_config.mode!r} is not implemented yet")
+    by_repo: dict[str, list[Candidate]] = {}
+    for candidate in candidates:
+        by_repo.setdefault(candidate.repo_id, []).append(candidate)
 
-    results = []
-    for i, candidate in enumerate(candidates):
-        if i > 0 and delay_seconds > 0:
-            time.sleep(delay_seconds)
-        others = [c for c in candidates if c.id != candidate.id]
-        context = _build_context(candidate, others, scan_config.treatment)
-        if skip_candidate_on_error:
-            try:
+    results_by_id: dict[str, ScanResult] = {}
+    call_index = 0
+    for repo_candidates in by_repo.values():
+        for candidate in repo_candidates:
+            if call_index > 0 and delay_seconds > 0:
+                time.sleep(delay_seconds)
+            call_index += 1
+
+            registry = SecretRegistry()
+            registry.register_candidates([candidate])
+            guard = LeakGuard(registry)
+            client = GuardedLLMClient(llm_client, guard)
+
+            classifier: SinglePromptClassifier | AgenticClassifier
+            if scan_config.mode == Mode.SINGLE:
+                classifier = SinglePromptClassifier(client)
+            elif scan_config.mode == Mode.AGENTIC:
+                classifier = AgenticClassifier(client, source_root, repo_candidates)
+            else:
+                raise NotImplementedError(f"scan mode {scan_config.mode!r} is not implemented yet")
+
+            others = [c for c in repo_candidates if c.id != candidate.id]
+            context = _build_context(candidate, others, scan_config.treatment)
+            if skip_candidate_on_error:
+                try:
+                    classification = classifier.classify(candidate, context)
+                except LeakError:
+                    logger.warning(
+                        "Excluding candidate %s from results after a blocked call "
+                        "(skip_candidate_on_error=True)",
+                        candidate.id,
+                    )
+                    continue
+                except LLMParsingError as exc:
+                    logger.warning(
+                        "Excluding candidate %s from results after unparseable model "
+                        "output (skip_candidate_on_error=True): %s",
+                        candidate.id,
+                        exc,
+                    )
+                    continue
+            else:
                 classification = classifier.classify(candidate, context)
-            except LeakError:
-                logger.warning(
-                    "Excluding candidate %s from results after a blocked call "
-                    "(skip_candidate_on_error=True)",
-                    candidate.id,
-                )
-                continue
-            except LLMParsingError as exc:
-                logger.warning(
-                    "Excluding candidate %s from results after unparseable model "
-                    "output (skip_candidate_on_error=True): %s",
-                    candidate.id,
-                    exc,
-                )
-                continue
-        else:
-            classification = classifier.classify(candidate, context)
-        results.append(ScanResult(candidate, classification))
-    return results
+            results_by_id[candidate.id] = ScanResult(candidate, classification)
+
+    return [results_by_id[c.id] for c in candidates if c.id in results_by_id]
 
 
 _CONTEXT_BUILDERS: dict[Treatment, Callable[[Candidate, list[Candidate]], SanitisedContext]] = {

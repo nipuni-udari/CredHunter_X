@@ -18,3 +18,4 @@ class Candidate:
     context_before: list[str]
     context_after: list[str]
     repo_id: str
+    source: str = "gitleaks"  # which scanner produced this candidate

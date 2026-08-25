@@ -104,7 +104,9 @@ def filter_snapshot_to_python_repos(python_repo_ids: set[str]) -> None:
 
     filtered = {k: v for k, v in full_snapshot.items() if short_id(k) in python_repo_ids}
     snapshot_path.write_text(json.dumps(filtered))
-    print(f"snapshot.json: {len(full_snapshot)} repos -> {len(filtered)} repos (Python-referenced only)")
+    print(
+        f"snapshot.json: {len(full_snapshot)} repos -> {len(filtered)} repos (Python-referenced only)"
+    )
 
 
 def filter_meta_to_python_repos(python_repo_ids: set[str]) -> None:
@@ -169,7 +171,9 @@ def main() -> None:
     run_download_data(venv_python)
     copy_output_to_project()
     print(f"\nDone. Windows-safe data/ and meta/ now at {PROJECT_RAW_DIR}")
-    print(f"({WORK_DIR} and {VENV_DIR}, including WORK_DIR's tmp/ dir, can be deleted once you've confirmed the copy.)")
+    print(
+        f"({WORK_DIR} and {VENV_DIR}, including WORK_DIR's tmp/ dir, can be deleted once you've confirmed the copy.)"
+    )
 
 
 if __name__ == "__main__":

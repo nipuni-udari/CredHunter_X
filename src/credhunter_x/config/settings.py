@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     llm_model: str = "gemini/gemini-flash-latest"
     llm_api_key: str = ""
     gitleaks_binary_path: str = "gitleaks"
+    trufflehog_binary_path: str = "trufflehog3"
 
 
 class Mode(StrEnum):

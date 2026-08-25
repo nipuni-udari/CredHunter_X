@@ -1,0 +1,60 @@
+[
+  {
+    "rule": {
+      "id": "high-entropy",
+      "message": "High Entropy",
+      "severity": "MEDIUM"
+    },
+    "path": "app/auth.py",
+    "line": "2",
+    "secret": "AbCdEfGhIjKlMnOpQrStUvWx",
+    "context": {
+      "2": "SLACK_BOT_TOKEN = \"xoxb-123456789012-1234567890123-AbCdEfGhIjKlMnOpQrStUvWx\""
+    },
+    "id": "33098f87-43e7-3737-b39d-b699e91fa7bb",
+    "branch": null,
+    "message": null,
+    "author": null,
+    "commit": null,
+    "date": null
+  },
+  {
+    "rule": {
+      "id": "generic.password-in-url",
+      "message": "Password in URL",
+      "pattern": "[a-zA-Z]{3,10}://[^/\\s:@]{3,20}:[^/\\s:@]{3,20}@.{1,100}[\"'\\s]",
+      "severity": "LOW"
+    },
+    "path": "app/db.py",
+    "line": "5",
+    "secret": "postgres://user:{DATABASE_PASSWORD}@localhost/db\"",
+    "context": {
+      "5": "    return f\"postgres://user:{DATABASE_PASSWORD}@localhost/db\""
+    },
+    "id": "d63af819-928d-336a-a8e2-e67f6550e069",
+    "branch": null,
+    "message": null,
+    "author": null,
+    "commit": null,
+    "date": null
+  },
+  {
+    "rule": {
+      "id": "high-entropy",
+      "message": "High Entropy",
+      "severity": "MEDIUM"
+    },
+    "path": "app/auth.py",
+    "line": "1",
+    "secret": "wWPw5k4aXcaT4fNP0UcnZwJUVFk6LO0pINUx",
+    "context": {
+      "1": "GITHUB_TOKEN = \"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\""
+    },
+    "id": "f1421868-1b5c-3466-9fdd-1b7faa9354f5",
+    "branch": null,
+    "message": null,
+    "author": null,
+    "commit": null,
+    "date": null
+  }
+]

@@ -1,15 +1,25 @@
-"""Research evaluation script: scores GitLeaks alone, or GitLeaks + an LLM
-classifier (Arm A single-prompt, or Arm B agentic), against CredData's
+"""Research evaluation script: scores a detector alone, or a detector + an
+LLM classifier (Arm A single-prompt, or Arm B agentic), against CredData's
 ground truth. Costs real LLM quota when --arm single/agentic is used — not
 part of CI, run manually.
 
+--source picks which scanner(s) generate candidates (default gitleaks, for
+backwards compatibility); "combined" runs gitleaks and trufflehog3
+independently and merges out any secret both flag (see
+pipeline/candidate_merge.py) so it isn't sent to the LLM twice. --arm
+gitleaks_only skips the LLM entirely regardless of --source -- it just
+reports whichever source was configured.
+
 Usage:
     uv run python scripts/run_evaluation.py --split dev --arm gitleaks_only
+    uv run python scripts/run_evaluation.py --split dev --arm gitleaks_only --source trufflehog
+    uv run python scripts/run_evaluation.py --split dev --arm gitleaks_only --source combined
     uv run python scripts/run_evaluation.py --split all --arm single --treatment raw
     uv run python scripts/run_evaluation.py --split all --arm single --treatment masked
     uv run python scripts/run_evaluation.py --split all --arm single --treatment pseudonymised
     uv run python scripts/run_evaluation.py --split all --arm single --treatment metadata_only
     uv run python scripts/run_evaluation.py --split all --arm agentic --treatment raw
+    uv run python scripts/run_evaluation.py --split all --arm agentic --source combined
 """
 
 from __future__ import annotations
@@ -17,6 +27,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -35,7 +46,10 @@ from credhunter_x.models.candidate import Candidate
 from credhunter_x.models.classification import Label
 from credhunter_x.models.evaluation import MetricReport
 from credhunter_x.models.treatment import Treatment
+from credhunter_x.pipeline.candidate_merge import merge_candidates
 from credhunter_x.pipeline.orchestrator import ScanResult, classify_candidates
+from credhunter_x.trufflehog.parser import parse_trufflehog_report
+from credhunter_x.trufflehog.runner import run_trufflehog
 
 CREDDATA_ROOT = Path("data/creddata_raw/CredData")
 RESULTS_DIR = Path("results")
@@ -53,6 +67,43 @@ def _select_candidates(candidates: list[Candidate], repo_ids: set[str]) -> list[
         for c in candidates
         if _repo_id_of(c.file_path) in repo_ids and c.file_path.endswith(".py")
     ]
+
+
+def _generate_candidates(source: str) -> list[Candidate]:
+    """Runs the requested detector(s) over the full materialized CredData
+    corpus. "combined" runs both independently, then merges out any secret
+    both flag so it's counted -- and sent to the LLM -- once, not twice.
+
+    Both parsers are pointed at CREDDATA_ROOT (all 71 repos at once, not
+    one repo at a time), so neither has a single repo_id to stamp on its
+    candidates -- it's derived here from each candidate's own file_path
+    instead, same convention as _repo_id_of/_select_candidates below."""
+    gitleaks_candidates: list[Candidate] = []
+    trufflehog_candidates: list[Candidate] = []
+
+    if source in ("gitleaks", "combined"):
+        print("Running gitleaks against the full materialized corpus...", flush=True)
+        findings = run_gitleaks(CREDDATA_ROOT)
+        gitleaks_candidates = parse_gitleaks_report(findings, CREDDATA_ROOT)
+
+    if source in ("trufflehog", "combined"):
+        print("Running trufflehog3 against the full materialized corpus...", flush=True)
+        # .py-only: a single pathological non-Python file elsewhere in the
+        # corpus is known to crash trufflehog3's own entropy scan (see
+        # run_trufflehog's include_extensions docstring), and every
+        # candidate outside a .py file gets discarded by _select_candidates
+        # below regardless.
+        findings = run_trufflehog(CREDDATA_ROOT, include_extensions=(".py",))
+        trufflehog_candidates = parse_trufflehog_report(findings, CREDDATA_ROOT)
+
+    if source == "gitleaks":
+        candidates = gitleaks_candidates
+    elif source == "trufflehog":
+        candidates = trufflehog_candidates
+    else:
+        candidates = merge_candidates(gitleaks_candidates, trufflehog_candidates)
+
+    return [replace(c, repo_id=_repo_id_of(c.file_path)) for c in candidates]
 
 
 def _print_report(report: MetricReport) -> None:
@@ -145,19 +196,21 @@ def _write_results(
     print(f"  results written to {jsonl_path} and {summary_path}", flush=True)
 
 
-def _write_gitleaks_results(
+def _write_detector_results(
     *,
+    arm_name: str,
     split: str,
     candidates: list[Candidate],
     gt_rows: list[GroundTruthRow],
     report: MetricReport,
 ) -> None:
-    """Persists the GitLeaks-only baseline the same way _write_results does
-    for the LLM arms, so every arm has a comparable results/ file. No
-    classification fields here — GitLeaks itself has no label/confidence/
-    explanation, just a flagged file+line."""
+    """Persists a detector-only baseline (gitleaks, trufflehog, or their
+    merged combination) the same way _write_results does for the LLM arms,
+    so every arm has a comparable results/ file. No classification fields
+    here — a scanner alone has no label/confidence/explanation, just a
+    flagged file+line."""
     RESULTS_DIR.mkdir(exist_ok=True)
-    stem = f"gitleaks_only_raw_{split}"
+    stem = f"{arm_name}_raw_{split}"
     gt_index = index_ground_truth(gt_rows)
 
     jsonl_path = RESULTS_DIR / f"{stem}.jsonl"
@@ -175,7 +228,7 @@ def _write_gitleaks_results(
 
     summary_path = RESULTS_DIR / f"{stem}_summary.json"
     summary = {
-        "arm": "gitleaks_only",
+        "arm": arm_name,
         "treatment": "raw",
         "split": split,
         "generated_at": datetime.now(UTC).isoformat(),
@@ -192,15 +245,15 @@ def _write_gitleaks_results(
     print(f"  results written to {jsonl_path} and {summary_path}", flush=True)
 
 
-def _run_gitleaks_only(
-    candidates: list[Candidate], gt_rows: list[GroundTruthRow]
+def _run_detector_only(
+    candidates: list[Candidate], gt_rows: list[GroundTruthRow], *, arm_name: str
 ) -> tuple[MetricReport, list[bool]]:
     gt_index = index_ground_truth(gt_rows)
     total_true_count = sum(1 for r in gt_rows if r.ground_truth)
     outcomes = [match_candidate(c, gt_index) for c in candidates]
     correct = [o == MatchOutcome.TRUE_POSITIVE for o in outcomes]
     report = compute_metrics(
-        outcomes, total_true_count=total_true_count, arm="gitleaks_only", treatment="raw"
+        outcomes, total_true_count=total_true_count, arm=arm_name, treatment="raw"
     )
     return report, correct
 
@@ -212,8 +265,9 @@ def _run_llm_arm(
     mode: Mode,
     treatment: Treatment,
     split: str,
+    source_label: str,
 ) -> tuple[MetricReport, MetricReport]:
-    """Returns (gitleaks_only_report, llm_report), both computed over the
+    """Returns (detector_only_report, llm_report), both computed over the
     same surviving candidate set so McNemar pairing stays valid even when
     the guard blocks a candidate at runtime.
 
@@ -262,7 +316,9 @@ def _run_llm_arm(
             print(f"    - {c.id}", flush=True)
 
     survived_candidates = [c for c in candidates if c.id in survived_ids]
-    gitleaks_report, gitleaks_correct = _run_gitleaks_only(survived_candidates, gt_rows)
+    detector_report, detector_correct = _run_detector_only(
+        survived_candidates, gt_rows, arm_name=source_label
+    )
 
     # Only a TRUE_SECRET verdict means the pipeline would surface this candidate
     # to a user at all -- FALSE_POSITIVE/UNCERTAIN verdicts mean it suppresses
@@ -281,7 +337,7 @@ def _run_llm_arm(
         outcomes, total_true_count=total_true_count, arm=arm_name, treatment=treatment.value
     )
 
-    stat, p_value = mcnemar_test(gitleaks_correct, correct)
+    stat, p_value = mcnemar_test(detector_correct, correct)
     report = MetricReport(
         arm=report.arm,
         treatment=report.treatment,
@@ -304,7 +360,7 @@ def _run_llm_arm(
         gt_rows=gt_rows,
         report=report,
     )
-    return gitleaks_report, report
+    return detector_report, report
 
 
 def main() -> None:
@@ -321,9 +377,16 @@ def main() -> None:
         choices=["raw", "masked", "pseudonymised", "metadata_only"],
         default="raw",
     )
+    parser.add_argument(
+        "--source",
+        choices=["gitleaks", "trufflehog", "combined"],
+        default="gitleaks",
+        help="which scanner(s) generate candidates; 'combined' merges gitleaks + trufflehog3",
+    )
     args = parser.parse_args()
     treatment = Treatment(args.treatment)
     mode = Mode.SINGLE if args.arm == "single" else Mode.AGENTIC
+    source_label = f"{args.source}_only"
 
     print("Loading ground truth labels...", flush=True)
     all_rows = load_creddata_labels()
@@ -342,28 +405,35 @@ def main() -> None:
         flush=True,
     )
 
-    print("Running gitleaks against the full materialized corpus...", flush=True)
-    findings = run_gitleaks(CREDDATA_ROOT)
-    all_candidates = parse_gitleaks_report(findings, CREDDATA_ROOT)
+    all_candidates = _generate_candidates(args.source)
     candidates = _select_candidates(all_candidates, repo_ids)
     print(f"  {len(candidates)} .py candidates fall within the '{args.split}' split", flush=True)
 
-    gitleaks_report, _ = _run_gitleaks_only(candidates, gt_rows)
-    _write_gitleaks_results(
-        split=args.split, candidates=candidates, gt_rows=gt_rows, report=gitleaks_report
+    detector_report, _ = _run_detector_only(candidates, gt_rows, arm_name=source_label)
+    _write_detector_results(
+        arm_name=source_label,
+        split=args.split,
+        candidates=candidates,
+        gt_rows=gt_rows,
+        report=detector_report,
     )
 
     if args.arm == "gitleaks_only":
-        _print_report(gitleaks_report)
+        _print_report(detector_report)
         return
 
-    gitleaks_report, llm_report = _run_llm_arm(
-        candidates, gt_rows, mode=mode, treatment=treatment, split=args.split
+    detector_report, llm_report = _run_llm_arm(
+        candidates,
+        gt_rows,
+        mode=mode,
+        treatment=treatment,
+        split=args.split,
+        source_label=source_label,
     )
 
     print()
-    print("--- gitleaks_only (for comparison / McNemar pairing) ---")
-    _print_report(gitleaks_report)
+    print(f"--- {source_label} (for comparison / McNemar pairing) ---")
+    _print_report(detector_report)
     print()
     print(f"--- {args.arm} ---")
     _print_report(llm_report)

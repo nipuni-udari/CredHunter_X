@@ -8,9 +8,10 @@ import pytest
 
 from credhunter_x.config.settings import Mode, ScanConfig, Settings
 from credhunter_x.llm import litellm_client as litellm_client_module
+from credhunter_x.models.candidate import Candidate
 from credhunter_x.models.classification import Label
 from credhunter_x.models.treatment import Treatment
-from credhunter_x.pipeline.orchestrator import scan_repository
+from credhunter_x.pipeline.orchestrator import classify_candidates, scan_repository
 
 FIXTURES_DIR = Path(__file__).resolve().parent.parent / "fixtures"
 SAMPLE_REPO = FIXTURES_DIR / "sample_repo"
@@ -210,3 +211,70 @@ def test_scan_repository_survives_one_candidate_with_an_empty_model_response(
     assert outcome.skipped_count == 1
     assert len(outcome.results) == 1
     assert outcome.results[0].classification.label == Label.TRUE_SECRET
+
+
+def _make_candidate(
+    *,
+    id: str,
+    repo_id: str,
+    matched_value: str,
+    line_start: int,
+    context_after: list[str] | None = None,
+) -> Candidate:
+    return Candidate(
+        id=id,
+        file_path="app/fixtures.py",
+        line_start=line_start,
+        line_end=line_start,
+        rule_id="high-entropy",
+        matched_value=matched_value,
+        value_start=0,
+        value_end=len(matched_value),
+        entropy=4.0,
+        matched_lines=[f"gravatar_id = '{matched_value}'"],
+        context_before=[],
+        context_after=context_after or [],
+        repo_id=repo_id,
+        source="trufflehog",
+    )
+
+
+def test_another_candidates_registered_value_appearing_nearby_does_not_block_this_one(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Regression test for the real bug found running trufflehog3 against
+    CredData: two candidates in the same repo, each with its own distinct
+    "secret" (often not a real secret at all -- e.g. a gravatar hash
+    trufflehog3's high-entropy rule mistakes for one). When one candidate's
+    context window happens to also contain the other's registered value,
+    the guard used to block the first candidate entirely and drop it from
+    the report -- even though nothing of its own was leaking. Every
+    finding should reach the LLM and show up in the report on its own
+    merits, regardless of what other candidates in the same repo look
+    like."""
+    _install_fake_completion(monkeypatch)
+    settings = _fake_settings()
+    scan_config = ScanConfig(mode=Mode.SINGLE, treatment=Treatment.RAW)
+    own_value = "own-secret-aaaaaaaaaaaaaaaaaaaaaa"
+    neighbour_value = "b68de5ae38616c296fa345d2b9df2225"
+    candidates = [
+        _make_candidate(
+            id="c1",
+            repo_id="repo-a",
+            matched_value=own_value,
+            line_start=10,
+            # c1's own context window happens to also contain c2's value.
+            context_after=[f"gravatar_id = '{neighbour_value}'"],
+        ),
+        _make_candidate(id="c2", repo_id="repo-a", matched_value=neighbour_value, line_start=11),
+    ]
+
+    results = classify_candidates(
+        candidates,
+        settings=settings,
+        scan_config=scan_config,
+        source_root=SAMPLE_REPO,
+        skip_candidate_on_error=True,
+    )
+
+    assert {r.candidate.id for r in results} == {"c1", "c2"}
