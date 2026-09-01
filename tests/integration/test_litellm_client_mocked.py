@@ -48,7 +48,7 @@ class _FakeResponse:
 def _install_fake_completion(monkeypatch: pytest.MonkeyPatch, response=None, error=None):
     calls: list[dict[str, object]] = []
 
-    def fake_completion(*, model, api_key, messages, response_format=None, tools=None):
+    def fake_completion(*, model, api_key, messages, response_format=None, tools=None, **_kwargs):
         calls.append(
             {
                 "model": model,
@@ -56,6 +56,7 @@ def _install_fake_completion(monkeypatch: pytest.MonkeyPatch, response=None, err
                 "messages": messages,
                 "response_format": response_format,
                 "tools": tools,
+                **_kwargs,
             }
         )
         if error:
@@ -72,7 +73,7 @@ def _install_fake_completion_sequence(monkeypatch: pytest.MonkeyPatch, side_effe
     calls: list[dict[str, object]] = []
     remaining = list(side_effects)
 
-    def fake_completion(*, model, api_key, messages, response_format=None, tools=None):
+    def fake_completion(*, model, api_key, messages, response_format=None, tools=None, **_kwargs):
         calls.append(
             {
                 "model": model,
@@ -108,6 +109,32 @@ def test_generate_maps_content_and_token_usage(monkeypatch: pytest.MonkeyPatch):
     assert calls[0]["model"] == "gemini/gemini-flash-latest"
     assert calls[0]["api_key"] == "fake-key"
     assert calls[0]["messages"] == [{"role": "user", "content": "classify this"}]
+
+
+def test_generate_forwards_reasoning_effort_when_set(monkeypatch: pytest.MonkeyPatch):
+    fake_response = _FakeResponse(
+        choices=[_FakeChoice(message=_FakeMessage(content='{"label": "true_secret"}'))],
+        usage=_FakeUsage(prompt_tokens=42, completion_tokens=17),
+    )
+    calls = _install_fake_completion(monkeypatch, response=fake_response)
+
+    client = LiteLLMClient(model="openai/o4-mini", api_key="fake-key", reasoning_effort="low")
+    client.generate("classify this")
+
+    assert calls[0]["reasoning_effort"] == "low"
+
+
+def test_generate_omits_reasoning_effort_when_unset(monkeypatch: pytest.MonkeyPatch):
+    fake_response = _FakeResponse(
+        choices=[_FakeChoice(message=_FakeMessage(content='{"label": "true_secret"}'))],
+        usage=_FakeUsage(prompt_tokens=42, completion_tokens=17),
+    )
+    calls = _install_fake_completion(monkeypatch, response=fake_response)
+
+    client = LiteLLMClient(model="gemini/gemini-flash-latest", api_key="fake-key")
+    client.generate("classify this")
+
+    assert "reasoning_effort" not in calls[0]
 
 
 def test_generate_wraps_sdk_errors_in_a_typed_error(monkeypatch: pytest.MonkeyPatch):
@@ -173,6 +200,121 @@ def test_generate_raises_after_exhausting_all_retry_attempts(monkeypatch: pytest
         client.generate("classify this")
 
     assert len(calls) == 5
+
+
+def test_generate_retries_when_the_model_returns_an_empty_completion(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """An empty completion is a successful response with no content, not an
+    exception, so the error-retry path never sees it. Left alone it reaches
+    the caller as unparseable output and the candidate is dropped from the
+    evaluation -- observed once in a 517-candidate run."""
+    monkeypatch.setattr(litellm_client_module.time, "sleep", lambda _: None)
+    empty = _FakeResponse(
+        choices=[_FakeChoice(message=_FakeMessage(content=""))],
+        usage=_FakeUsage(prompt_tokens=9, completion_tokens=0),
+    )
+    good = _FakeResponse(
+        choices=[_FakeChoice(message=_FakeMessage(content='{"label": "true_secret"}'))],
+        usage=_FakeUsage(prompt_tokens=9, completion_tokens=31),
+    )
+    calls = _install_fake_completion_sequence(monkeypatch, [empty, good])
+
+    client = LiteLLMClient(model="gemini/gemini-flash-latest", api_key="fake-key")
+    result = client.generate("classify this")
+
+    assert result.text == '{"label": "true_secret"}'
+    # usage must come from the attempt that actually answered, not the empty one
+    assert result.output_tokens == 31
+    assert len(calls) == 2
+
+
+def test_generate_retries_a_whitespace_only_completion_too(monkeypatch: pytest.MonkeyPatch):
+    """Whitespace parses no better than an empty string."""
+    monkeypatch.setattr(litellm_client_module.time, "sleep", lambda _: None)
+    blank = _FakeResponse(
+        choices=[_FakeChoice(message=_FakeMessage(content="   \n  "))],
+        usage=_FakeUsage(prompt_tokens=1, completion_tokens=1),
+    )
+    good = _FakeResponse(
+        choices=[_FakeChoice(message=_FakeMessage(content="{}"))],
+        usage=_FakeUsage(prompt_tokens=1, completion_tokens=1),
+    )
+    calls = _install_fake_completion_sequence(monkeypatch, [blank, good])
+
+    client = LiteLLMClient(model="gemini/gemini-flash-latest", api_key="fake-key")
+
+    assert client.generate("classify this").text == "{}"
+    assert len(calls) == 2
+
+
+def test_generate_gives_up_after_repeated_empty_completions(monkeypatch: pytest.MonkeyPatch):
+    """It must bound the retries and hand the empty result back for the
+    caller's existing error handling, not loop or raise something new."""
+    monkeypatch.setattr(litellm_client_module.time, "sleep", lambda _: None)
+    empty = _FakeResponse(
+        choices=[_FakeChoice(message=_FakeMessage(content=""))],
+        usage=_FakeUsage(prompt_tokens=1, completion_tokens=0),
+    )
+    calls = _install_fake_completion_sequence(
+        monkeypatch, [empty] * litellm_client_module._MAX_EMPTY_ATTEMPTS
+    )
+
+    client = LiteLLMClient(model="gemini/gemini-flash-latest", api_key="fake-key")
+    result = client.generate("classify this")
+
+    assert result.text == ""
+    assert len(calls) == litellm_client_module._MAX_EMPTY_ATTEMPTS
+
+
+def test_generate_does_not_retry_a_normal_response(monkeypatch: pytest.MonkeyPatch):
+    """Pins that the empty-retry loop costs nothing on the happy path -- one
+    API call per generate(), exactly as before."""
+    fake_response = _FakeResponse(
+        choices=[_FakeChoice(message=_FakeMessage(content='{"label": "false_positive"}'))],
+        usage=_FakeUsage(prompt_tokens=3, completion_tokens=7),
+    )
+    calls = _install_fake_completion(monkeypatch, response=fake_response)
+
+    client = LiteLLMClient(model="gemini/gemini-flash-latest", api_key="fake-key")
+    result = client.generate("classify this")
+
+    assert result.text == '{"label": "false_positive"}'
+    assert len(calls) == 1
+
+
+def test_generate_with_tools_still_accepts_an_empty_content_response(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """The empty-retry loop is deliberately confined to generate(). Under
+    tool calling, empty content plus tool_calls is the normal shape of a
+    turn -- retrying it would break Arm B."""
+    fake_response = _FakeResponse(
+        choices=[
+            _FakeChoice(
+                message=_FakeMessage(
+                    content="",
+                    tool_calls=[
+                        _FakeToolCall(
+                            id="call_1",
+                            function=_FakeFunction(name="check_file_exists", arguments="{}"),
+                        )
+                    ],
+                )
+            )
+        ],
+        usage=_FakeUsage(prompt_tokens=4, completion_tokens=2),
+    )
+    calls = _install_fake_completion(monkeypatch, response=fake_response)
+
+    client = LiteLLMClient(model="groq/openai/gpt-oss-120b", api_key="fake-key")
+    result = client.generate_with_tools(
+        [{"role": "user", "content": "x"}], tools=[{"type": "function"}]
+    )
+
+    assert result.text == ""
+    assert len(result.tool_calls) == 1
+    assert len(calls) == 1
 
 
 def test_generate_defaults_response_format_to_classification_schema(

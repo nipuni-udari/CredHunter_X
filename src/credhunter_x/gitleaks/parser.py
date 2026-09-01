@@ -20,6 +20,12 @@ def parse_gitleaks_report(
     source_root = source_root.resolve()
     file_cache: dict[Path, list[str]] = {}
     candidates = []
+    # gitleaks' own Fingerprint (file:rule:line) isn't always unique -- its
+    # decode-pass can emit a second finding with the same Fingerprint for
+    # the same secret. Without an occurrence index, both would collide on
+    # id and classify_candidates' id-keyed results dict would silently
+    # drop one of the two classifications (the second overwrites the first).
+    occurrence_counts: dict[str, int] = {}
 
     for finding in findings:
         abs_path = Path(finding["File"])
@@ -49,9 +55,13 @@ def parse_gitleaks_report(
             value_start = derived_start
             value_end = derived_start + len(matched_value)
 
+        fingerprint = finding["Fingerprint"]
+        occurrence_index = occurrence_counts.get(fingerprint, 0)
+        occurrence_counts[fingerprint] = occurrence_index + 1
+
         candidates.append(
             Candidate(
-                id=finding["Fingerprint"],
+                id=f"{fingerprint}:{occurrence_index}",
                 file_path=rel_path,
                 line_start=line_start,
                 line_end=line_end,

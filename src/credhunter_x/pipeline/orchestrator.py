@@ -14,7 +14,7 @@ from credhunter_x.gitleaks.runner import run_gitleaks
 from credhunter_x.guard.errors import LeakError
 from credhunter_x.guard.leak_guard import LeakGuard
 from credhunter_x.llm.guarded_client import GuardedLLMClient
-from credhunter_x.llm.litellm_client import LiteLLMClient
+from credhunter_x.llm.litellm_client import LiteLLMClient, LiteLLMClientError
 from credhunter_x.llm.parsing import LLMParsingError
 from credhunter_x.masking.masker import (
     build_metadata_only_context,
@@ -111,15 +111,23 @@ def classify_candidates(
     (default 0, no effect on a normal single-repo scan).
 
     skip_candidate_on_error (default False) excludes just the offending
-    candidate instead of aborting the whole batch, for two error types:
+    candidate instead of aborting the whole batch, for three error types:
     LeakError (the call still aborted and got logged -- this only decides
-    what happens after, not whether the guard fires) and LLMParsingError
-    (a malformed final answer, a pure availability trade-off, no safety
-    angle)."""
+    what happens after, not whether the guard fires), LLMParsingError (a
+    malformed final answer), and LiteLLMClientError (the call itself
+    failed even after litellm_client's own retries -- a timeout, a rate
+    limit that never recovered, an account issue). The latter two are a
+    pure availability trade-off, no safety angle -- without this, one
+    slow or flaky call kills an entire bulk run instead of costing a
+    single candidate."""
     if not candidates:
         return []
 
-    llm_client = LiteLLMClient(model=settings.llm_model, api_key=settings.llm_api_key)
+    llm_client = LiteLLMClient(
+        model=settings.llm_model,
+        api_key=settings.llm_api_key,
+        reasoning_effort=settings.llm_reasoning_effort,
+    )
 
     by_repo: dict[str, list[Candidate]] = {}
     for candidate in candidates:
@@ -132,6 +140,7 @@ def classify_candidates(
             if call_index > 0 and delay_seconds > 0:
                 time.sleep(delay_seconds)
             call_index += 1
+            print(f"  [{call_index}/{len(candidates)}] classifying {candidate.id}", flush=True)
 
             registry = SecretRegistry()
             registry.register_candidates([candidate])
@@ -166,8 +175,20 @@ def classify_candidates(
                         exc,
                     )
                     continue
+                except LiteLLMClientError as exc:
+                    logger.warning(
+                        "Excluding candidate %s from results after a failed LLM call "
+                        "(skip_candidate_on_error=True): %s",
+                        candidate.id,
+                        exc,
+                    )
+                    continue
             else:
                 classification = classifier.classify(candidate, context)
+            print(
+                f"    -> {classification.label} (confidence={classification.confidence:.2f})",
+                flush=True,
+            )
             results_by_id[candidate.id] = ScanResult(candidate, classification)
 
     return [results_by_id[c.id] for c in candidates if c.id in results_by_id]

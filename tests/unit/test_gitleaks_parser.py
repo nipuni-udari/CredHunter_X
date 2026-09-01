@@ -25,7 +25,7 @@ def test_maps_fields_correctly_for_github_token_finding():
     )
     github = next(c for c in candidates if c.rule_id == "github-pat")
 
-    assert github.id == "app/auth.py:github-pat:1"
+    assert github.id == "app/auth.py:github-pat:1:0"
     assert github.file_path == "app/auth.py"
     assert github.line_start == 1
     assert github.line_end == 1
@@ -48,7 +48,7 @@ def test_maps_fields_correctly_for_slack_token_finding():
     )
     slack = next(c for c in candidates if c.rule_id == "slack-bot-token")
 
-    assert slack.id == "app/auth.py:slack-bot-token:2"
+    assert slack.id == "app/auth.py:slack-bot-token:2:0"
     assert slack.file_path == "app/auth.py"
     assert slack.line_start == 2
     assert slack.line_end == 2
@@ -68,6 +68,47 @@ def test_maps_fields_correctly_for_slack_token_finding():
 
 def test_empty_findings_list_returns_empty_candidates():
     assert parse_gitleaks_report([], SAMPLE_REPO) == []
+
+
+def test_two_findings_sharing_a_fingerprint_get_distinct_ids(tmp_path):
+    """The real bug this closes: gitleaks' decode-pass can emit a second
+    finding with the same Fingerprint as the original (same file:rule:line)
+    for what is still the same real secret. Without an occurrence index,
+    both would get the identical id -- and classify_candidates' id-keyed
+    results dict would silently drop one of the two classifications (the
+    second overwrites the first)."""
+    (tmp_path / "url.py").write_text('URL = "...AKIAEXAMPLE123456789..."\n')
+    findings = [
+        {
+            "Fingerprint": "url.py:aws-access-token:1",
+            "File": "url.py",
+            "StartLine": 1,
+            "EndLine": 1,
+            "StartColumn": 8,
+            "EndColumn": 28,
+            "RuleID": "aws-access-token",
+            "Secret": "AKIAEXAMPLE123456789",
+            "Entropy": 3.5,
+        },
+        {
+            "Fingerprint": "url.py:aws-access-token:1",
+            "File": "url.py",
+            "StartLine": 1,
+            "EndLine": 1,
+            "StartColumn": 8,
+            "EndColumn": 512,
+            "RuleID": "aws-access-token",
+            "Secret": "AKIAEXAMPLE123456789",
+            "Entropy": 3.5,
+        },
+    ]
+
+    candidates = parse_gitleaks_report(findings, tmp_path)
+
+    assert len(candidates) == 2
+    ids = {c.id for c in candidates}
+    assert len(ids) == 2  # the real assertion: no collision
+    assert ids == {"url.py:aws-access-token:1:0", "url.py:aws-access-token:1:1"}
 
 
 def test_value_start_end_fall_back_to_negative_one_when_value_not_found_in_line(tmp_path):

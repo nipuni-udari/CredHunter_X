@@ -30,7 +30,7 @@ def test_maps_fields_correctly_for_github_token_finding():
     )
     github = next(c for c in candidates if c.line_start == 1)
 
-    assert github.id == "app/auth.py:high-entropy:1"
+    assert github.id == "app/auth.py:high-entropy:1:0"
     assert github.file_path == "app/auth.py"
     assert github.line_start == 1
     assert github.line_end == 1
@@ -70,6 +70,39 @@ def test_entropy_is_computed_since_trufflehog_reports_none():
 
 def test_empty_findings_list_returns_empty_candidates():
     assert parse_trufflehog_report([], SAMPLE_REPO) == []
+
+
+def test_two_distinct_secrets_on_the_same_line_get_distinct_ids(tmp_path):
+    """The real bug this closes: trufflehog3's generic high-entropy rule can
+    flag two genuinely different secrets on one line. Without an occurrence
+    index, both would get the identical file:rule:line id -- and
+    classify_candidates' id-keyed results dict would silently drop one of
+    the two classifications (the second overwrites the first)."""
+    (tmp_path / "two_secrets.py").write_text('A = "aaaaaaaaaaaaaaaa"; B = "bbbbbbbbbbbbbbbb"\n')
+    findings = [
+        {
+            "id": "id-a",
+            "path": "two_secrets.py",
+            "rule": {"id": "high-entropy"},
+            "context": {"1": 'A = "aaaaaaaaaaaaaaaa"; B = "bbbbbbbbbbbbbbbb"'},
+            "secret": "aaaaaaaaaaaaaaaa",
+        },
+        {
+            "id": "id-b",
+            "path": "two_secrets.py",
+            "rule": {"id": "high-entropy"},
+            "context": {"1": 'A = "aaaaaaaaaaaaaaaa"; B = "bbbbbbbbbbbbbbbb"'},
+            "secret": "bbbbbbbbbbbbbbbb",
+        },
+    ]
+
+    candidates = parse_trufflehog_report(findings, tmp_path)
+
+    assert len(candidates) == 2
+    ids = {c.id for c in candidates}
+    assert len(ids) == 2  # the real assertion: no collision
+    values = {c.matched_value for c in candidates}
+    assert values == {"aaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbb"}
 
 
 def test_value_start_end_fall_back_to_negative_one_when_value_not_found_in_line(tmp_path):

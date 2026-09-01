@@ -19,9 +19,14 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     # litellm-style "provider/model" string, e.g. "anthropic/claude-sonnet-5".
-    # Switching providers is a config change, not a code change.
-    llm_model: str = "gemini/gemini-flash-latest"
+    # Switching providers is a config change, not a code change. Required,
+    # not defaulted -- a missing LLM_MODEL should fail loudly at startup,
+    # not silently fall back to an arbitrary unused model.
+    llm_model: str
     llm_api_key: str = ""
+    # Only meaningful for reasoning-capable models; ignored by others.
+    # Unset leaves the model's own default reasoning behaviour in place.
+    llm_reasoning_effort: str | None = None
     gitleaks_binary_path: str = "gitleaks"
     trufflehog_binary_path: str = "trufflehog3"
 

@@ -10,6 +10,11 @@ pipeline/candidate_merge.py) so it isn't sent to the LLM twice. --arm
 gitleaks_only skips the LLM entirely regardless of --source -- it just
 reports whichever source was configured.
 
+--candidates-cache freezes the scan so every arm and treatment is scored on
+one identical candidate set (see _load_candidates_cache). It is off by
+default: re-scanning is the correct behaviour for a real repository, which
+gains new secrets between runs.
+
 Usage:
     uv run python scripts/run_evaluation.py --split dev --arm gitleaks_only
     uv run python scripts/run_evaluation.py --split dev --arm gitleaks_only --source trufflehog
@@ -20,6 +25,12 @@ Usage:
     uv run python scripts/run_evaluation.py --split all --arm single --treatment metadata_only
     uv run python scripts/run_evaluation.py --split all --arm agentic --treatment raw
     uv run python scripts/run_evaluation.py --split all --arm agentic --source combined
+
+    # scan once, then score every arm/treatment on that same frozen set:
+    uv run python scripts/run_evaluation.py --split all --arm gitleaks_only --source combined \
+        --candidates-cache data/processed/all_combined.candidates.json
+    uv run python scripts/run_evaluation.py --split all --arm single --treatment masked \
+        --source combined --candidates-cache data/processed/all_combined.candidates.json
 """
 
 from __future__ import annotations
@@ -27,7 +38,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from dataclasses import replace
+from dataclasses import asdict, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -40,6 +51,7 @@ from credhunter_x.evaluation.labeler import (
     match_candidate,
 )
 from credhunter_x.evaluation.metrics import compute_metrics, mcnemar_test
+from credhunter_x.evaluation.result_files import result_stem
 from credhunter_x.gitleaks.parser import parse_gitleaks_report
 from credhunter_x.gitleaks.runner import run_gitleaks
 from credhunter_x.models.candidate import Candidate
@@ -53,6 +65,55 @@ from credhunter_x.trufflehog.runner import run_trufflehog
 
 CREDDATA_ROOT = Path("data/creddata_raw/CredData")
 RESULTS_DIR = Path("results")
+
+# Bumped whenever Candidate's fields change, so an old cache is rejected
+# rather than blowing up inside Candidate(**row).
+_CACHE_FORMAT = 1
+
+
+def _cache_key(source: str) -> dict[str, object]:
+    """What a cached candidate set is valid for. Reusing a gitleaks-only
+    cache on a --source combined run would score the wrong candidate set
+    without any visible sign, so the key is checked on load."""
+    return {"format": _CACHE_FORMAT, "source": source, "corpus": str(CREDDATA_ROOT)}
+
+
+def _load_candidates_cache(path: Path, source: str) -> list[Candidate]:
+    """Loads a frozen candidate set instead of re-running the detectors.
+
+    Why this exists: the detectors are re-run on every invocation, and
+    trufflehog3 emits its findings in a different order each time (it scans
+    in parallel). merge_candidates absorbs the FIRST trufflehog finding that
+    matches a given gitleaks one, and a multi-line private key legitimately
+    matches many of them -- so a different one survives each run. The
+    candidate count is stable; which candidates they are is not. Measured
+    across two --split all runs: 6 of 517 differed.
+
+    That is harmless for a single run, but RQ4 compares treatments to each
+    other, and "what does masking cost?" only means something if every
+    treatment judged the same candidates. Freezing the set makes that
+    guarantee explicit rather than hoping the scan repeats itself."""
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if payload.get("key") != _cache_key(source):
+        raise SystemExit(
+            f"{path} was built for {payload.get('key')}, but this run needs "
+            f"{_cache_key(source)}. Delete it, point --candidates-cache elsewhere, "
+            "or pass --refresh-candidates to rebuild it."
+        )
+    return [Candidate(**row) for row in payload["candidates"]]
+
+
+def _save_candidates_cache(path: Path, source: str, candidates: list[Candidate]) -> None:
+    """Holds real secret values (matched_value, matched_lines, context) --
+    keep it gitignored and never ship it."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "key": _cache_key(source),
+        "generated_at": datetime.now(UTC).isoformat(),
+        "candidates": [asdict(c) for c in candidates],
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    print(f"  cached {len(candidates)} candidates to {path}", flush=True)
 
 
 def _repo_id_of(file_path: str) -> str:
@@ -127,6 +188,7 @@ def _write_results(
     arm: str,
     treatment: str,
     split: str,
+    source: str,
     model: str,
     scan_results: list[ScanResult],
     excluded: list[Candidate],
@@ -138,7 +200,7 @@ def _write_results(
     secret values verbatim, same as they do on stdout -- inherent to raw
     treatment, not new exposure here)."""
     RESULTS_DIR.mkdir(exist_ok=True)
-    stem = f"{arm}_{treatment}_{split}"
+    stem = result_stem(arm=arm, treatment=treatment, split=split, source=source, model=model)
     gt_index = index_ground_truth(gt_rows)
 
     jsonl_path = RESULTS_DIR / f"{stem}.jsonl"
@@ -178,6 +240,7 @@ def _write_results(
         "arm": arm,
         "treatment": treatment,
         "split": split,
+        "source": source,
         "model": model,
         "generated_at": datetime.now(UTC).isoformat(),
         "n_candidates_evaluated": len(scan_results),
@@ -231,6 +294,9 @@ def _write_detector_results(
         "arm": arm_name,
         "treatment": "raw",
         "split": split,
+        # arm_name already carries the source ("combined_only"), but record
+        # it as its own field so every summary is queryable the same way.
+        "source": arm_name.removesuffix("_only"),
         "generated_at": datetime.now(UTC).isoformat(),
         "n_candidates_evaluated": len(candidates),
         "metrics": {
@@ -265,7 +331,9 @@ def _run_llm_arm(
     mode: Mode,
     treatment: Treatment,
     split: str,
+    source: str,
     source_label: str,
+    delay_seconds: float,
 ) -> tuple[MetricReport, MetricReport]:
     """Returns (detector_only_report, llm_report), both computed over the
     same surviving candidate set so McNemar pairing stays valid even when
@@ -290,16 +358,17 @@ def _run_llm_arm(
         f"Calling the LLM for {len(candidates)} candidates (this costs real API quota)...",
         flush=True,
     )
-    # Groq's free-tier TPM budget (8000 tokens/min on this model) can't absorb
-    # 87 back-to-back calls, some carrying large multi-line private-key
-    # context windows -- pace calls so we stay under budget instead of
-    # relying solely on the client's own retry/backoff to recover.
+    # Pacing is a per-provider concern, so it's a flag rather than a
+    # constant: the 8s that a free tier needed costs over an hour of pure
+    # sleeping across a 517-candidate run on a paid endpoint. LiteLLMClient
+    # already retries rate limits with exponential backoff, so this only
+    # reduces how often that has to fire -- see --delay-seconds.
     scan_results = classify_candidates(
         candidates,
         settings=settings,
         scan_config=scan_config,
         source_root=CREDDATA_ROOT,
-        delay_seconds=8.0,
+        delay_seconds=delay_seconds,
         skip_candidate_on_error=True,
     )
 
@@ -354,6 +423,7 @@ def _run_llm_arm(
         arm=arm_name,
         treatment=treatment.value,
         split=split,
+        source=source,
         model=settings.llm_model,
         scan_results=scan_results,
         excluded=excluded,
@@ -383,7 +453,37 @@ def main() -> None:
         default="gitleaks",
         help="which scanner(s) generate candidates; 'combined' merges gitleaks + trufflehog3",
     )
+    parser.add_argument(
+        "--candidates-cache",
+        type=Path,
+        default=None,
+        help=(
+            "reuse one frozen candidate set across runs so every arm and treatment is "
+            "scored on identical input (built on first use, loaded thereafter). Off by "
+            "default -- a scan of a real repository must re-run the detectors to catch "
+            "secrets added since. Contains real secret values: keep it gitignored."
+        ),
+    )
+    parser.add_argument(
+        "--refresh-candidates",
+        action="store_true",
+        help="re-scan and overwrite --candidates-cache, e.g. after the corpus changes",
+    )
+    parser.add_argument(
+        "--delay-seconds",
+        type=float,
+        default=1.0,
+        help=(
+            "pause between LLM calls, to stay under a provider's rate limit "
+            "(default 1.0; raise it for a constrained free tier, 0 to go flat out -- "
+            "the client retries rate limits with backoff either way)"
+        ),
+    )
     args = parser.parse_args()
+    if args.delay_seconds < 0:
+        parser.error("--delay-seconds cannot be negative")
+    if args.refresh_candidates and args.candidates_cache is None:
+        parser.error("--refresh-candidates only means something with --candidates-cache")
     treatment = Treatment(args.treatment)
     mode = Mode.SINGLE if args.arm == "single" else Mode.AGENTIC
     source_label = f"{args.source}_only"
@@ -405,7 +505,16 @@ def main() -> None:
         flush=True,
     )
 
-    all_candidates = _generate_candidates(args.source)
+    cache = args.candidates_cache
+    if cache is not None and cache.exists() and not args.refresh_candidates:
+        print(f"Loading cached candidates from {cache} (skipping the scan)...", flush=True)
+        all_candidates = _load_candidates_cache(cache, args.source)
+        print(f"  {len(all_candidates)} candidates loaded", flush=True)
+    else:
+        all_candidates = _generate_candidates(args.source)
+        if cache is not None:
+            _save_candidates_cache(cache, args.source, all_candidates)
+
     candidates = _select_candidates(all_candidates, repo_ids)
     print(f"  {len(candidates)} .py candidates fall within the '{args.split}' split", flush=True)
 
@@ -428,7 +537,9 @@ def main() -> None:
         mode=mode,
         treatment=treatment,
         split=args.split,
+        source=args.source,
         source_label=source_label,
+        delay_seconds=args.delay_seconds,
     )
 
     print()

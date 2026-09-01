@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 from pydantic import ValidationError
 
@@ -14,6 +15,17 @@ class LLMParsingError(RuntimeError):
     pass
 
 
+_CODE_FENCE = re.compile(r"^```(?:json)?\s*(.*?)\s*```$", re.DOTALL)
+
+
+def _strip_code_fence(text: str) -> str:
+    """Some models (e.g. minimax-m3) ignore response_format and wrap JSON in
+    a markdown code fence regardless of instructions -- strip it if present
+    so a well-formed answer isn't rejected as malformed."""
+    match = _CODE_FENCE.match(text.strip())
+    return match.group(1) if match else text
+
+
 def parse_classification(
     response: LLMResponse,
     *,
@@ -24,7 +36,7 @@ def parse_classification(
     """The only place model output turns into a ClassificationResult.
     Malformed output raises a typed error instead of crashing."""
     try:
-        data = ClassificationSchema.model_validate_json(response.text)
+        data = ClassificationSchema.model_validate_json(_strip_code_fence(response.text))
     except (ValidationError, json.JSONDecodeError) as exc:
         raise LLMParsingError(
             f"malformed model output for candidate={candidate_id}: {exc}"

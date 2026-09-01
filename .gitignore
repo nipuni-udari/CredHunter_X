@@ -20,6 +20,9 @@ htmlcov/
 data/creddata_raw/
 data/processed/
 results/
+scratchpad_tmp/
+# frozen candidate sets (--candidates-cache) hold real secret values
+*.candidates.json
 
 .idea/
 .vscode/

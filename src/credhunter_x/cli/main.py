@@ -31,7 +31,7 @@ def scan(
     """Scans PATH and prints one line per candidate. Exits non-zero if any
     candidate is true_secret, or if any candidate couldn't be classified
     at all."""
-    settings = Settings()
+    settings = Settings()  # type: ignore[call-arg]  # pydantic-settings fills required fields from .env at runtime
     scan_config = load_scan_config()
     outcome = scan_repository(path, settings=settings, scan_config=scan_config)
     results = outcome.results

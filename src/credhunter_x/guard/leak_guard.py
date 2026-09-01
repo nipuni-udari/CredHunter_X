@@ -50,14 +50,20 @@ class LeakGuard:
         if not self._registry:
             raise LeakError("LeakGuard registry is empty — refusing to permit any outbound call")
 
-        permitted_value = ""
+        # Every string belonging to this candidate, not just its whole
+        # matched value -- a credential component extracted from it (e.g. a
+        # decoded url password) is equally its own secret, and is not
+        # necessarily a substring of the full value.
+        permitted_values: set[str] = set()
         if raw_permit_candidate_id is not None:
-            permitted_value = self._registry.value_for(raw_permit_candidate_id) or ""
+            permitted_values = self._registry.values_for(raw_permit_candidate_id)
 
         safe_spans = _safe_pem_spans(payload)
 
         for fragment in self._registry.fragments():
-            if fragment not in payload or fragment in permitted_value:
+            if fragment not in payload:
+                continue
+            if any(fragment in permitted for permitted in permitted_values):
                 continue
             if self._all_occurrences_are_safe(fragment, payload, safe_spans):
                 continue

@@ -55,7 +55,7 @@ class _FakeCompletion:
     def __init__(self) -> None:
         self.received_prompts: list[str] = []
 
-    def __call__(self, *, model, api_key, messages, response_format=None, tools=None):
+    def __call__(self, *, model, api_key, messages, response_format=None, tools=None, **_kwargs):
         self.received_prompts.append(messages[0]["content"])
         return _FakeResponse(
             choices=[_FakeChoice(message=_FakeMessage(content=FAKE_RESPONSE_JSON))],
@@ -69,16 +69,67 @@ def _install_fake_completion(monkeypatch: pytest.MonkeyPatch) -> _FakeCompletion
     return fake
 
 
-class _FakeCompletionEmptyOnFirstCall:
-    """Reproduces the real failure found live in CredHunter-X's own GitHub
-    Action demo: a provider returning a completely empty response body for
-    one candidate (LLMParsingError: 'EOF while parsing a value'), with
-    every other candidate classified normally."""
+class _FakeCompletionFirstCandidateAlwaysTimesOut:
+    """Reproduces the real failure found live running Arm B against
+    CredData: a provider call timing out on every retry (litellm.Timeout,
+    exhausting litellm_client's own retries) used to crash the whole batch
+    with an unhandled LiteLLMClientError -- one flaky candidate losing
+    every other candidate's already-completed work. Fails every attempt
+    for the first candidate's call (all _MAX_ATTEMPTS retries), then
+    succeeds for every call after -- a genuinely unrecoverable timeout,
+    not one retry away from working."""
 
     def __init__(self) -> None:
         self.calls = 0
 
-    def __call__(self, *, model, api_key, messages, response_format=None, tools=None):
+    def __call__(self, *, model, api_key, messages, response_format=None, tools=None, **_kwargs):
+        self.calls += 1
+        if self.calls <= litellm_client_module._MAX_ATTEMPTS:
+            raise litellm_client_module.litellm.exceptions.Timeout(
+                message="Connection timed out", model=model, llm_provider="openrouter"
+            )
+        return _FakeResponse(
+            choices=[_FakeChoice(message=_FakeMessage(content=FAKE_RESPONSE_JSON))],
+            usage=_FakeUsage(prompt_tokens=1, completion_tokens=1),
+        )
+
+
+class _FakeCompletionAlwaysEmptyForOneCandidate:
+    """Reproduces the real failure found live in CredHunter-X's own GitHub
+    Action demo: a provider returning a completely empty response body for
+    one candidate (LLMParsingError: 'EOF while parsing a value'), with
+    every other candidate classified normally.
+
+    Empty on every attempt for that one candidate, so it outlives
+    generate()'s empty-response retry -- this pins the skip path for output
+    that is genuinely unusable, not a transient blip (see
+    _FakeCompletionEmptyOnFirstCall for that)."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self._cursed_prompt: str | None = None
+
+    def __call__(self, *, model, api_key, messages, response_format=None, tools=None, **_kwargs):
+        self.calls += 1
+        prompt = messages[-1]["content"]
+        if self._cursed_prompt is None:
+            self._cursed_prompt = prompt
+        content = "" if prompt == self._cursed_prompt else FAKE_RESPONSE_JSON
+        return _FakeResponse(
+            choices=[_FakeChoice(message=_FakeMessage(content=content))],
+            usage=_FakeUsage(prompt_tokens=1, completion_tokens=1),
+        )
+
+
+class _FakeCompletionEmptyOnFirstCall:
+    """One empty response, then normal output -- the transient provider blip
+    seen once in a 517-candidate run, where the same candidate classified
+    fine on every retry."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def __call__(self, *, model, api_key, messages, response_format=None, tools=None, **_kwargs):
         self.calls += 1
         content = "" if self.calls == 1 else FAKE_RESPONSE_JSON
         return _FakeResponse(
@@ -193,16 +244,16 @@ def test_scan_repository_metadata_only_never_sends_a_real_or_length_matched_valu
         assert "•" * len(SLACK_SECRET) not in sent
 
 
-def test_scan_repository_survives_one_candidate_with_an_empty_model_response(
+def test_scan_repository_survives_one_candidate_whose_call_times_out(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """The real bug found live in the GitHub Action demo: an unhandled
-    LLMParsingError from one candidate crashed the whole scan with a
-    traceback before any report was ever written. scan_repository() must
-    survive it, still classify the other candidate, and truthfully report
-    that one was skipped rather than silently returning a "clean" result."""
-    fake = _FakeCompletionEmptyOnFirstCall()
+    """The real failure found live running Arm B against CredData: a
+    timed-out provider call raised LiteLLMClientError, which
+    skip_candidate_on_error didn't catch, crashing the whole batch. Must
+    survive it the same way an empty response or a guard block do."""
+    fake = _FakeCompletionFirstCandidateAlwaysTimesOut()
     monkeypatch.setattr(litellm_client_module.litellm, "completion", fake)
+    monkeypatch.setattr(litellm_client_module.time, "sleep", lambda *a, **k: None)
     settings = _fake_settings()
     scan_config = ScanConfig(mode=Mode.SINGLE)
 
@@ -211,6 +262,45 @@ def test_scan_repository_survives_one_candidate_with_an_empty_model_response(
     assert outcome.skipped_count == 1
     assert len(outcome.results) == 1
     assert outcome.results[0].classification.label == Label.TRUE_SECRET
+
+
+def test_scan_repository_survives_one_candidate_with_an_empty_model_response(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """The real bug found live in the GitHub Action demo: an unhandled
+    LLMParsingError from one candidate crashed the whole scan with a
+    traceback before any report was ever written. scan_repository() must
+    survive it, still classify the other candidate, and truthfully report
+    that one was skipped rather than silently returning a "clean" result."""
+    fake = _FakeCompletionAlwaysEmptyForOneCandidate()
+    monkeypatch.setattr(litellm_client_module.litellm, "completion", fake)
+    monkeypatch.setattr(litellm_client_module.time, "sleep", lambda *a, **k: None)
+    settings = _fake_settings()
+    scan_config = ScanConfig(mode=Mode.SINGLE)
+
+    outcome = scan_repository(SAMPLE_REPO, settings=settings, scan_config=scan_config)
+
+    assert outcome.skipped_count == 1
+    assert len(outcome.results) == 1
+    assert outcome.results[0].classification.label == Label.TRUE_SECRET
+
+
+def test_scan_repository_recovers_a_candidate_whose_response_was_empty_once(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """A one-off empty completion used to drop the candidate permanently:
+    it is a successful response, so the error-retry path never saw it, and
+    it died at the parse instead. Both candidates must now survive."""
+    fake = _FakeCompletionEmptyOnFirstCall()
+    monkeypatch.setattr(litellm_client_module.litellm, "completion", fake)
+    monkeypatch.setattr(litellm_client_module.time, "sleep", lambda *a, **k: None)
+    settings = _fake_settings()
+    scan_config = ScanConfig(mode=Mode.SINGLE)
+
+    outcome = scan_repository(SAMPLE_REPO, settings=settings, scan_config=scan_config)
+
+    assert outcome.skipped_count == 0
+    assert len(outcome.results) == 2
 
 
 def _make_candidate(

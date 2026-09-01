@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 import json
+import random
 from dataclasses import replace
 from pathlib import Path
 
+import pytest
+
 from credhunter_x.gitleaks.parser import parse_gitleaks_report
+from credhunter_x.guard.leak_guard import LeakGuard
 from credhunter_x.masking.masker import (
+    _bullet_line_fallback,
+    _scrub_fragments_in_line,
     build_metadata_only_context,
     build_pseudonymised_context,
     build_raw_context,
@@ -15,6 +21,7 @@ from credhunter_x.masking.masker import (
     pseudonymise_value,
     redact_value,
 )
+from credhunter_x.masking.secret_registry import SecretRegistry, fragments_of, secret_components
 from credhunter_x.models.candidate import Candidate
 from credhunter_x.models.treatment import Treatment
 
@@ -98,6 +105,278 @@ def test_mask_context_window_ignores_candidates_from_a_different_file():
 
     result = mask_context_window(github, [unrelated])
     assert len(result.masked_spans) == 1
+
+
+def test_mask_context_window_scrubs_a_leftover_fragment_elsewhere_in_the_window():
+    """The real bug this fix closes: the whole-value replace above only
+    catches an exact repeat of the *entire* secret. A partial repeat --
+    the same value reformatted or embedded in different surrounding text
+    elsewhere in the window -- can still contain a FRAGMENT_LEN-character
+    run of the real secret, which is exactly the granularity LeakGuard
+    checks payloads at (see SecretRegistry.fragments()). Left unscrubbed,
+    that fragment would sail through masking untouched, then trip the
+    guard on the very next call and get a legitimate scanner-found
+    candidate silently dropped from results (skip_candidate_on_error)."""
+    fragment = GITHUB_SECRET[4:24]  # 20 chars, well over FRAGMENT_LEN (16)
+    candidate = Candidate(
+        id="c1",
+        file_path="app/config.py",
+        line_start=5,
+        line_end=5,
+        rule_id="github-pat",
+        matched_value=GITHUB_SECRET,
+        value_start=0,
+        value_end=len(GITHUB_SECRET),
+        entropy=4.0,
+        matched_lines=[f'TOKEN = "{GITHUB_SECRET}"'],
+        context_before=[],
+        # Not a verbatim repeat of the whole value, so the whole-value
+        # replace never fires here -- but it does share a long enough
+        # run of the real secret to count as a fragment leak.
+        context_after=[f"# backup ref: xxx-{fragment}-yyy"],
+        repo_id="test-repo",
+    )
+
+    result = mask_context_window(candidate, [])
+
+    assert GITHUB_SECRET not in result.sanitised_snippet
+    assert fragment not in result.sanitised_snippet
+
+    registry = SecretRegistry()
+    registry.register(candidate.id, candidate.matched_value)
+    guard = LeakGuard(registry)
+    guard.check(result.sanitised_snippet, candidate_id=candidate.id)  # must not raise
+
+
+def _fragment_leak_candidate(fragment: str) -> Candidate:
+    return Candidate(
+        id="c1",
+        file_path="app/config.py",
+        line_start=5,
+        line_end=5,
+        rule_id="github-pat",
+        matched_value=GITHUB_SECRET,
+        value_start=0,
+        value_end=len(GITHUB_SECRET),
+        entropy=4.0,
+        matched_lines=[f'TOKEN = "{GITHUB_SECRET}"'],
+        context_before=[],
+        context_after=[f"# backup ref: xxx-{fragment}-yyy"],
+        repo_id="test-repo",
+    )
+
+
+def test_fragment_scrub_strands_no_real_secret_characters():
+    """Passing LeakGuard is necessary but NOT sufficient. The guard only
+    looks for whole FRAGMENT_LEN-character runs, so scrubbing fragments one
+    at a time can satisfy it while still leaving shorter runs of the real
+    secret in the payload -- each replacement destroys the overlap the next
+    (heavily overlapping) fragment needed to match, stranding the characters
+    between them. Measured against the real corpus, that leaked partial
+    values on 83 of 517 candidates. Masked treatment promises no real value
+    reaches the model, not merely 'no 16-character run of it'."""
+    leftover = GITHUB_SECRET[4:36]  # 32 chars — two fragments' worth, overlapping
+    snippet = mask_context_window(_fragment_leak_candidate(leftover), []).sanitised_snippet
+
+    # No run of >=6 real characters may survive anywhere in the window.
+    survivors = [
+        GITHUB_SECRET[i : i + 6]
+        for i in range(len(GITHUB_SECRET) - 5)
+        if GITHUB_SECRET[i : i + 6] in snippet
+    ]
+    assert survivors == [], f"real secret characters left in the payload: {survivors}"
+
+
+def test_fragment_scrub_is_independent_of_fragment_iteration_order():
+    """fragments_of() returns a set, and Python randomises string hashing
+    per process -- so a scrub whose result depends on iteration order
+    produces a different prompt run to run and the evaluation stops being
+    reproducible. Set order is fixed *within* one process, so feeding the
+    scrub differently-ordered sequences of the same fragments is what
+    actually reproduces the cross-process effect here."""
+    text = f"# backup ref: xxx-{GITHUB_SECRET[4:36]}-yyy"
+    fragments = sorted(fragments_of(GITHUB_SECRET))
+
+    orderings = [
+        fragments,
+        list(reversed(fragments)),
+        fragments[len(fragments) // 2 :] + fragments[: len(fragments) // 2],
+        random.Random(7).sample(fragments, len(fragments)),
+        random.Random(99).sample(fragments, len(fragments)),
+    ]
+    outputs = {_scrub_fragments_in_line(text, o, _bullet_line_fallback) for o in orderings}  # type: ignore[arg-type]
+
+    assert len(outputs) == 1, f"scrub produced {len(outputs)} different outputs: {outputs}"
+
+
+DB_URL = "mysql://usr:pwd%23%20@hst:123/db"
+
+
+def _url_candidate() -> Candidate:
+    return Candidate(
+        id="u1",
+        file_path="t.py",
+        line_start=2,
+        line_end=2,
+        rule_id="generic.password-in-url",
+        matched_value=DB_URL,
+        value_start=17,
+        value_end=17 + len(DB_URL),
+        entropy=3.5,
+        matched_lines=[f"    cfg = parse('{DB_URL}')"],
+        context_before=["def test_connection():"],
+        context_after=[
+            "    assert cfg['user']   == 'usr'",
+            "    assert cfg['passwd'] == 'pwd%23%20'",  # the password, on its own
+            "    assert cfg['passwd'] == 'pwd# '",  # ...and its decoded form
+        ],
+        repo_id="test-repo",
+    )
+
+
+@pytest.mark.parametrize(
+    ("description", "matched_value", "expected"),
+    [
+        (
+            "url password, encoded and decoded",
+            "mysql://usr:pwd%23%20@hst/db",
+            {"pwd%23%20", "pwd#"},
+        ),
+        ("connection string", "Server=db;User=sa;Password=hunter2;", {"hunter2"}),
+        ("json blob", '{"client_secret": "aB3$xY9!", "user": "bob"}', {"aB3$xY9!"}),
+        ("dotenv pair", "DB_PASSWORD=s3cr3t!x", {"s3cr3t!x"}),
+        ("query string", "https://api.io/v1?api_key=Zk9$mQ2&user=bob", {"Zk9$mQ2"}),
+        ("underscored password", "ftp://u:my_secret_pw@h/x", {"my_secret_pw"}),
+    ],
+)
+def test_secret_components_extracts_the_credential_from_any_delimited_format(
+    description, matched_value, expected
+):
+    """A scanner reports one blob; the credential inside it is often far
+    shorter than FRAGMENT_LEN, so no window of the blob ever equals it.
+    Splitting on the field separators every credential format shares keeps
+    this working beyond the one url shape the corpus happened to contain."""
+    assert secret_components(matched_value) == expected, description
+
+
+@pytest.mark.parametrize(
+    ("description", "matched_value"),
+    [
+        # Blanking these would destroy the identifiers the classifier reads.
+        ("password is a dictionary word", "ftp://u:password@h/x"),
+        ("password is 'test'", "ftp://u:test@h/x"),
+        ("key names must not become secrets", '{"client_secret": "x", "api_key": "y"}'),
+        ("hostnames must not become secrets", "https://example.com/path/to/file"),
+        # No delimiters: the whole value's own fragments already cover it.
+        ("opaque token", "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"),
+        ("aws key", "AKIAIOSFODNN7EXAMPLE"),
+    ],
+)
+def test_secret_components_refuses_tokens_that_would_blank_ordinary_code(
+    description, matched_value
+):
+    """The cost of registering a sub-value is that masking blanks it
+    everywhere in the window. "password", "client_secret" and "example.com"
+    are code, not credentials, and losing them costs the classifier more
+    than hiding them gains."""
+    assert secret_components(matched_value) == set(), description
+
+
+def test_mask_context_window_scrubs_a_url_password_repeated_on_its_own():
+    """gitleaks' password-in-url rule reports the WHOLE url, so no
+    FRAGMENT_LEN-character window of it ever equals the short password
+    inside. A file that also asserts that password on its own line leaked
+    it -- past both masking and the guard, which share the same 16-char
+    granularity. Registering the credential component closes it (9 real
+    cases in the CredData corpus, one a complete password)."""
+    result = mask_context_window(_url_candidate(), [])
+
+    assert DB_URL not in result.sanitised_snippet
+    assert "pwd%23%20" not in result.sanitised_snippet
+    assert "pwd# " not in result.sanitised_snippet  # the decoded form too
+    # The surrounding assertions are ordinary code and must survive intact.
+    assert "cfg['user']" in result.sanitised_snippet
+    assert "'usr'" in result.sanitised_snippet
+
+
+def test_url_password_scrub_does_not_trip_the_guard_in_raw_treatment():
+    """Raw treatment permits a candidate's OWN secret. A decoded password
+    is not a substring of the encoded url it came from, so permitting only
+    the whole matched value would make the guard block a raw call over the
+    candidate's own material -- turning a leak fix into dropped results."""
+    candidate = _url_candidate()
+    registry = SecretRegistry()
+    registry.register(candidate.id, candidate.matched_value)
+    guard = LeakGuard(registry)
+
+    snippet = build_raw_context(candidate, []).sanitised_snippet
+    guard.check(snippet, candidate_id=candidate.id, raw_permit_candidate_id=candidate.id)
+
+
+def test_mask_context_window_masks_a_secret_whose_value_is_in_the_window_but_line_is_not():
+    """Neighbours used to be selected by line-number overlap, so a
+    candidate reported at line 500 whose value is ALSO used inside this
+    window went unmasked -- and the guard never sees it either, since it
+    only registers the target. Selection is by file now, with presence
+    decided by the text itself."""
+    key = "AKIAIOSFODNN7EXAMPLE"
+    target = Candidate(
+        id="t",
+        file_path="a.py",
+        line_start=5,
+        line_end=5,
+        rule_id="github-pat",
+        matched_value=GITHUB_SECRET,
+        value_start=12,
+        value_end=12 + len(GITHUB_SECRET),
+        entropy=4.0,
+        matched_lines=[f'    token = "{GITHUB_SECRET}"'],
+        context_before=["import boto3", "", "def upload():", f'    client = client(key="{key}")'],
+        context_after=["    return client"],
+        repo_id="test-repo",
+    )
+    far_away = Candidate(
+        id="aws",
+        file_path="a.py",
+        line_start=501,  # far outside the window, but its value is inside it
+        line_end=501,
+        rule_id="aws-access-token",
+        matched_value=key,
+        value_start=10,
+        value_end=10 + len(key),
+        entropy=4.0,
+        matched_lines=[f'AWS_KEY = "{key}"'],
+        context_before=[],
+        context_after=[],
+        repo_id="test-repo",
+    )
+
+    result = mask_context_window(target, [far_away])
+
+    assert GITHUB_SECRET not in result.sanitised_snippet
+    assert key not in result.sanitised_snippet
+
+
+def test_a_same_file_candidate_absent_from_the_window_gets_no_metadata_span():
+    """The scrub side is broad (every candidate in the file); the metadata
+    side must stay narrow, or the model is handed a description of a secret
+    it cannot see anywhere in its window."""
+    candidates = load_candidates()
+    github = next(c for c in candidates if c.rule_id == "github-pat")
+    # A value that appears nowhere in github's window, unlike the fixture's
+    # own slack token, which really does sit inside it.
+    elsewhere = replace(
+        next(c for c in candidates if c.rule_id == "slack-bot-token"),
+        id="elsewhere",
+        line_start=900,
+        line_end=900,
+        matched_value="AKIAZZZZZZZZZZZZNOTHERE",
+    )
+
+    result = mask_context_window(github, [elsewhere])
+
+    assert len(result.masked_spans) == 1  # the target only
+    assert result.masked_spans[0].start == github.line_start
 
 
 def test_build_raw_context_leaves_target_secret_unmasked():

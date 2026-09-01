@@ -24,6 +24,11 @@ def parse_trufflehog_report(
     source_root = source_root.resolve()
     file_cache: dict[Path, list[str]] = {}
     candidates = []
+    # trufflehog3's generic high-entropy rule can flag more than one distinct
+    # secret on the same line -- file:rule:line alone isn't a unique id then,
+    # which silently drops one of the two from classify_candidates' id-keyed
+    # results (last one processed wins). An occurrence index closes that.
+    occurrence_counts: dict[tuple[str, str, int], int] = {}
 
     for finding in findings:
         abs_path = Path(finding["path"])
@@ -57,9 +62,13 @@ def parse_trufflehog_report(
             value_start = derived_start
             value_end = derived_start + len(matched_value)
 
+        occurrence_key = (rel_path, rule_id, line_start)
+        occurrence_index = occurrence_counts.get(occurrence_key, 0)
+        occurrence_counts[occurrence_key] = occurrence_index + 1
+
         candidates.append(
             Candidate(
-                id=f"{rel_path}:{rule_id}:{line_start}",
+                id=f"{rel_path}:{rule_id}:{line_start}:{occurrence_index}",
                 file_path=rel_path,
                 line_start=line_start,
                 line_end=line_end,
