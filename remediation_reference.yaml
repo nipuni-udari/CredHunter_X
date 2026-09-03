@@ -1,38 +1,142 @@
-# Pre-registered reference standard for RQ3 (remediation quality). Each
-# entry's required_elements/source is written BEFORE looking at any
-# collected remediation output (results/*.jsonl) -- filling this in after
-# the fact would bias it toward whatever the model already says, defeating
-# the whole point of a pre-registered standard. This is scaffolding only:
-# every entry below is a placeholder for the student to fill in as a real
-# methodological step, not something authored by an LLM on their behalf.
+# Reference standard for RQ3 (remediation quality).
 #
-# One entry per rule_id in src/credhunter_x/classifiers/tools/get_gitleaks_rule.py's
-# _RULE_DESCRIPTIONS.
+# PROVENANCE -- read this before citing the file in the write-up.
+# Drafted with AI assistance on 2026-09-03, from the sources named in each
+# entry. It was NOT written blind to results/*.jsonl. The assistant that
+# drafted it had already read the collected remediation text, so the
+# elements may be shaped toward what the model already says, which biases
+# the pass rate upward. Describe it in Methodology as "derived from
+# published guidance with AI assistance", not as "pre-registered blind to
+# results". Declare the AI use per the Academic Conduct Policy.
+#
+# SHAPE
+# Four elements per entry. The first three are the same everywhere -- they
+# are what any leaked credential needs, whatever type it is. The fourth is
+# specific to the credential type, and it is the only one that varies. So
+# the per-rule table measures one thing: does the model know what kind of
+# credential it is looking at.
+#
+# A candidate passes only if all four elements are present. No partial
+# credit -- see score_remediation_quality.py line 141. That makes the
+# element count a difficulty knob. Four was chosen because four actions is
+# what adequate remediation means here, not because it clears the 80%
+# target. Report the Wilson lower bound.
+#
+# If a run shows an element nothing ever satisfies, do not edit it. Report
+# it. That is a finding about the model, not a bug in the standard.
+#
+# COVERAGE
+# 13 keys, 11 distinct lists. Covers all 10 rule_ids that appear in
+# data/processed/all_combined.candidates.json, plus two that appear in no
+# candidate. The unused ones are kept on purpose: a standard that covers
+# rules which never fired is visibly not reverse-engineered from the
+# results.
 
-aws-access-token:
-  required_elements: []
-  source: "TODO"
+# ===================== entropy, no known type =========================
 
-private-key:
-  required_elements: []
-  source: "TODO"
+high-entropy:                    # 356 candidates, 69% of the corpus
+  required_elements:
+    - "Revoke or rotate the credential with whoever issued it, so the leaked value stops working."
+    - "Take the literal out of the source file. Read it from an environment variable or a secret manager instead."
+    - "Remove the value from the repository history, not just from the current file."
+    - "Work out what the string actually is and which system issued it, instead of assuming it is a live credential."
+  source: "https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html"
 
-generic-api-key:
-  required_elements: []
-  source: "TODO"
+# ======================== generic families ============================
 
-jwt:
-  required_elements: []
-  source: "TODO"
+generic-api-key:                 # 71 candidates
+  required_elements:
+    - "Revoke or rotate the credential with whoever issued it, so the leaked value stops working."
+    - "Take the literal out of the source file. Read it from an environment variable or a secret manager instead."
+    - "Remove the value from the repository history, not just from the current file."
+    - "Check the provider's logs for calls made with the key while it was exposed."
+  source: "https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html"
 
-github-pat:
-  required_elements: []
-  source: "TODO"
+generic.secret:                  # 5 candidates
+  required_elements:
+    - "Revoke or rotate the credential with whoever issued it, so the leaked value stops working."
+    - "Take the literal out of the source file. Read it from an environment variable or a secret manager instead."
+    - "Remove the value from the repository history, not just from the current file."
+    - "Say what breaks when the value changes. Sessions, signed cookies and tokens issued under the old secret stop validating."
+  source: "https://cwe.mitre.org/data/definitions/798.html"
 
-slack-bot-token:
-  required_elements: []
-  source: "TODO"
+generic.password-in-url:         # 62 candidates
+  required_elements:
+    - "Revoke or rotate the credential with whoever issued it, so the leaked value stops working."
+    - "Take the literal out of the source file. Read it from an environment variable or a secret manager instead."
+    - "Remove the value from the repository history, not just from the current file."
+    - "Change the password on the account itself, not only the URL. Credentials in a URL end up in logs and proxies."
+  source: "https://www.rfc-editor.org/rfc/rfc3986.html#section-3.2.1"
+
+# ======================= typed credentials ============================
+
+aws-access-token:                # 5 candidates
+  required_elements:
+    - "Revoke or rotate the credential with whoever issued it, so the leaked value stops working."
+    - "Take the literal out of the source file. Read it from an environment variable or a secret manager instead."
+    - "Remove the value from the repository history, not just from the current file."
+    - "Deactivate the access key in IAM and then delete it. Check CloudTrail for what it did."
+  source: "https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_access-keys.html"
+
+jwt:                             # 2 candidates
+  required_elements:
+    - "Revoke or rotate the credential with whoever issued it, so the leaked value stops working."
+    - "Take the literal out of the source file. Read it from an environment variable or a secret manager instead."
+    - "Remove the value from the repository history, not just from the current file."
+    - "Rotate the signing key, not just this token. A JWT cannot be recalled once issued unless something keeps a denylist."
+  source: "https://www.rfc-editor.org/rfc/rfc8725.html"
+
+google.oauth-token:              # 1 candidate
+  required_elements:
+    - "Revoke or rotate the credential with whoever issued it, so the leaked value stops working."
+    - "Take the literal out of the source file. Read it from an environment variable or a secret manager instead."
+    - "Remove the value from the repository history, not just from the current file."
+    - "Revoke the refresh token as well. It keeps working after the access token has expired."
+  source: "https://docs.cloud.google.com/docs/security/compromised-credentials"
+
+# ---- merged families: one credential, two scanners, two spellings ----
+# The YAML anchor makes both keys the same object, so they cannot drift
+# apart. Do not delete either spelling. The loader matches on the literal
+# rule_id string in the results .jsonl, so dropping one silently skips
+# those candidates.
+
+private-key: &private_key        # 9 candidates, gitleaks spelling
+  required_elements:
+    - "Revoke or rotate the credential with whoever issued it, so the leaked value stops working."
+    - "Take the literal out of the source file. Read it from an environment variable or a secret manager instead."
+    - "Remove the value from the repository history, not just from the current file."
+    - "Generate a new keypair and replace the public half everywhere it was trusted. Revoke any certificate issued against the old key."
+  source: "https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-57pt1r5.pdf"
+
+private.key: *private_key        # 3 candidates, trufflehog spelling
+
+github.token: &github_token      # 3 candidates, trufflehog spelling
+  required_elements:
+    - "Revoke or rotate the credential with whoever issued it, so the leaked value stops working."
+    - "Take the literal out of the source file. Read it from an environment variable or a secret manager instead."
+    - "Remove the value from the repository history, not just from the current file."
+    - "Revoke the token in GitHub account settings. Check the security log for what it was used for."
+  source: "https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/token-expiration-and-revocation"
+
+github-pat: *github_token        # 0 candidates, gitleaks spelling
+
+# ============ kept, but no candidates in this corpus ==================
+# Retained so the standard is visibly not fitted to the observed data.
 
 gcp-api-key:
-  required_elements: []
-  source: "TODO"
+  required_elements:
+    - "Revoke or rotate the credential with whoever issued it, so the leaked value stops working."
+    - "Take the literal out of the source file. Read it from an environment variable or a secret manager instead."
+    - "Remove the value from the repository history, not just from the current file."
+    - "Delete the key in the Cloud console and recreate it with the same API and referrer restrictions. An unrestricted replacement is worse than the key you removed."
+  source: "https://docs.cloud.google.com/docs/authentication/api-keys-best-practices"
+
+slack-bot-token:
+  # Source not verified. Find a Slack token-rotation doc and confirm it
+  # before citing, or drop this entry. No candidates use it either way.
+  required_elements:
+    - "Revoke or rotate the credential with whoever issued it, so the leaked value stops working."
+    - "Take the literal out of the source file. Read it from an environment variable or a secret manager instead."
+    - "Remove the value from the repository history, not just from the current file."
+    - "Revoke the token in the Slack app settings and reinstall the app to issue a new one."
+  source: "TODO -- verify a Slack source before citing"
