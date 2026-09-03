@@ -9,7 +9,7 @@ from credhunter_x.classifiers.tools.check_file_exists import check_file_exists
 from credhunter_x.classifiers.tools.get_gitleaks_rule import get_gitleaks_rule
 from credhunter_x.classifiers.tools.search_file import search_file
 from credhunter_x.llm.client import LLMClient, LLMResponse, LLMToolResponse, ToolCall
-from credhunter_x.llm.parsing import parse_classification
+from credhunter_x.llm.parsing import LLMParsingError, parse_classification
 from credhunter_x.llm.prompts import build_agentic_prompt
 from credhunter_x.masking.masker import mask_arbitrary_text
 from credhunter_x.models.candidate import Candidate
@@ -156,6 +156,24 @@ class AgenticClassifier:
             total_latency_ms += response.latency_ms
 
             if not response.tool_calls:
+                # No tools called and nothing said: a transient empty
+                # completion, which finalises on "" and loses the candidate.
+                # generate()'s empty-retry doesn't reach here -- Arm B goes
+                # through generate_with_tools, where empty content alongside
+                # tool calls is normal and must not be retried. Turns remain,
+                # so ask again; the last turn falls through to _finalise and
+                # skips exactly as before.
+                if not response.text.strip() and turn < _MAX_TURNS:
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                "Your previous response was empty. Give your final "
+                                "answer now by calling submit_classification."
+                            ),
+                        }
+                    )
+                    continue
                 return self._finalise(
                     candidate,
                     context,
@@ -174,16 +192,40 @@ class AgenticClassifier:
                 # Some models route structured output through tool-calling
                 # even when asked for plain text, so a call to this tool
                 # counts as the final answer.
-                return self._finalise(
-                    candidate,
-                    context,
-                    json.dumps(submission.arguments),
-                    turn,
-                    tool_call_records,
-                    total_input_tokens,
-                    total_output_tokens,
-                    total_latency_ms,
-                )
+                try:
+                    return self._finalise(
+                        candidate,
+                        context,
+                        json.dumps(submission.arguments),
+                        turn,
+                        tool_call_records,
+                        total_input_tokens,
+                        total_output_tokens,
+                        total_latency_ms,
+                    )
+                except LLMParsingError:
+                    # The model announced its final answer and then submitted
+                    # a form that doesn't validate -- observed once as
+                    # submit_classification({}), which cost the candidate its
+                    # place in the run despite three unused turns remaining.
+                    # Say what was wrong and let it resubmit; the turn cap
+                    # still bounds this, and the last turn re-raises so
+                    # genuinely unusable output is skipped exactly as before.
+                    if turn == _MAX_TURNS:
+                        raise
+                    messages.append(self._assistant_message(response))
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": submission.id,
+                            "content": (
+                                "Your submit_classification call was rejected: it must "
+                                "include label, confidence, severity, explanation and "
+                                "remediation. Call it again with all five fields."
+                            ),
+                        }
+                    )
+                    continue
 
             messages.append(self._assistant_message(response))
             for tool_call in response.tool_calls:

@@ -3,9 +3,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from credhunter_x.classifiers.agentic import AgenticClassifier
+import pytest
+
+from credhunter_x.classifiers.agentic import _MAX_TURNS, AgenticClassifier
 from credhunter_x.gitleaks.parser import parse_gitleaks_report
 from credhunter_x.llm.client import LLMToolResponse, ToolCall
+from credhunter_x.llm.parsing import LLMParsingError
 from credhunter_x.masking.masker import build_raw_context, mask_context_window
 from credhunter_x.models.classification import Label
 
@@ -71,6 +74,117 @@ def _tool_call_response(name: str, arguments: dict, call_id: str = "call_1") -> 
         output_tokens=2,
         latency_ms=1.0,
     )
+
+
+def test_an_empty_response_with_no_tool_calls_is_retried():
+    """Observed live in Arm B pseudonymised: the model returned no tool
+    calls and no text, which finalised on "" and cost the candidate its
+    place. generate()'s empty-retry cannot help here -- Arm B goes through
+    generate_with_tools, where empty content is normal alongside a tool
+    call, so the recovery has to live in the turn loop."""
+    candidates = load_candidates()
+    github = next(c for c in candidates if c.rule_id == "github-pat")
+    client = _ScriptedClient([_final_answer(""), _final_answer()])
+    classifier = AgenticClassifier(client, SAMPLE_REPO, candidates)
+
+    result = classifier.classify(github, mask_context_window(github, []))
+
+    assert result.label == Label.TRUE_SECRET
+    assert result.turns == 2
+    nudges = [
+        m
+        for m in client.calls[1]["messages"]
+        if m["role"] == "user" and "empty" in str(m["content"])
+    ]
+    assert len(nudges) == 1
+
+
+def test_an_empty_response_on_every_turn_is_still_skipped():
+    """Bounded by the same turn cap: if it never answers, the final turn
+    finalises on "" and raises, so skip_candidate_on_error handles it
+    exactly as before."""
+    candidates = load_candidates()
+    github = next(c for c in candidates if c.rule_id == "github-pat")
+    client = _ScriptedClient([_final_answer("")] * _MAX_TURNS)
+    classifier = AgenticClassifier(client, SAMPLE_REPO, candidates)
+
+    with pytest.raises(LLMParsingError):
+        classifier.classify(github, mask_context_window(github, []))
+
+    assert len(client.calls) == _MAX_TURNS
+
+
+def test_a_normal_text_answer_still_returns_on_the_first_turn():
+    """Pins that the empty check costs nothing when the model does answer."""
+    candidates = load_candidates()
+    github = next(c for c in candidates if c.rule_id == "github-pat")
+    client = _ScriptedClient([_final_answer()])
+    classifier = AgenticClassifier(client, SAMPLE_REPO, candidates)
+
+    result = classifier.classify(github, mask_context_window(github, []))
+
+    assert result.label == Label.TRUE_SECRET
+    assert result.turns == 1
+    assert len(client.calls) == 1
+
+
+def test_a_blank_submission_is_rejected_and_the_model_gets_to_resubmit():
+    """Observed live: the model called submit_classification({}) -- valid
+    JSON, none of the five required fields. That raised straight out of the
+    turn loop and the candidate was dropped from the run, despite three
+    unused turns remaining. It must be told what was wrong and allowed to
+    answer again."""
+    candidates = load_candidates()
+    github = next(c for c in candidates if c.rule_id == "github-pat")
+    client = _ScriptedClient(
+        [
+            _tool_call_response("submit_classification", {}),
+            _tool_call_response("submit_classification", json.loads(FAKE_ANSWER_JSON), "call_2"),
+        ]
+    )
+    classifier = AgenticClassifier(client, SAMPLE_REPO, candidates)
+
+    result = classifier.classify(github, mask_context_window(github, []))
+
+    assert result.label == Label.TRUE_SECRET
+    assert result.turns == 2
+    # the retry must say what was missing, not just silently re-ask
+    tool_messages = [m for m in client.calls[1]["messages"] if m["role"] == "tool"]
+    assert len(tool_messages) == 1
+    assert "rejected" in tool_messages[0]["content"]
+    for field in ("label", "confidence", "severity", "explanation", "remediation"):
+        assert field in tool_messages[0]["content"]
+
+
+def test_a_blank_submission_on_every_turn_is_still_skipped():
+    """The retry must not swallow genuinely unusable output -- once the turn
+    cap is reached it raises exactly as before, so skip_candidate_on_error
+    handles it the way it always did."""
+    candidates = load_candidates()
+    github = next(c for c in candidates if c.rule_id == "github-pat")
+    client = _ScriptedClient([_tool_call_response("submit_classification", {})] * _MAX_TURNS)
+    classifier = AgenticClassifier(client, SAMPLE_REPO, candidates)
+
+    with pytest.raises(LLMParsingError):
+        classifier.classify(github, mask_context_window(github, []))
+
+    assert len(client.calls) == _MAX_TURNS
+
+
+def test_a_valid_submission_still_returns_on_the_first_turn():
+    """Pins that the try/except costs nothing on the normal path."""
+    candidates = load_candidates()
+    github = next(c for c in candidates if c.rule_id == "github-pat")
+    client = _ScriptedClient(
+        [_tool_call_response("submit_classification", json.loads(FAKE_ANSWER_JSON))]
+    )
+    classifier = AgenticClassifier(client, SAMPLE_REPO, candidates)
+
+    result = classifier.classify(github, mask_context_window(github, []))
+
+    assert result.label == Label.TRUE_SECRET
+    assert result.turns == 1
+    assert len(client.calls) == 1
 
 
 def test_answers_immediately_when_no_tool_call_is_needed():
