@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from credhunter_x.evaluation.remediation_scoring import (
     ElementCheckParsingError,
+    build_questions,
     parse_element_check,
     score_remediation,
 )
@@ -110,3 +111,78 @@ def test_score_remediation_sends_the_element_check_schema_and_every_element():
     prompt = client.received_prompts[0]
     for element in REQUIRED_ELEMENTS:
         assert element in prompt
+
+
+def test_build_questions_orders_required_then_optional_then_gates():
+    questions = build_questions(["req1", "req2"], ["opt1"], [None, "gate for req2"])
+
+    assert questions == ["req1", "req2", "opt1", "gate for req2"]
+
+
+def test_build_questions_raises_when_gates_do_not_align_with_required():
+    with pytest.raises(ValueError):
+        build_questions(["req1", "req2"], [], ["only one gate"])
+
+
+def test_optional_elements_are_scored_but_never_gate_the_pass():
+    # both required present, both optional absent -> still a full pass
+    text = json.dumps({"element_present": [True, True, False, False]})
+
+    result = parse_element_check(
+        make_response(text),
+        candidate_id="c1",
+        rule_id="generic-api-key",
+        required_elements=["req1", "req2"],
+        optional_elements=["opt1", "opt2"],
+    )
+
+    assert result.pass_rate == 1.0
+    assert result.element_present == [True, True]
+    assert result.optional_present == [False, False]
+
+
+def test_gated_element_is_waived_when_its_gate_answers_false():
+    """The high-entropy case: the remediation says the value is not a
+    credential, so 'revoke it' is not a defect."""
+    # [identify=True, revoke=False, gate=False]
+    text = json.dumps({"element_present": [True, False, False]})
+
+    result = parse_element_check(
+        make_response(text),
+        candidate_id="c1",
+        rule_id="high-entropy",
+        required_elements=["identify the value", "revoke at provider"],
+        required_gates=[None, "the remediation treats it as a live credential"],
+    )
+
+    assert result.pass_rate == 1.0
+    assert result.gate_answers == [False]
+
+
+def test_gated_element_is_still_required_when_its_gate_answers_true():
+    text = json.dumps({"element_present": [True, False, True]})
+
+    result = parse_element_check(
+        make_response(text),
+        candidate_id="c1",
+        rule_id="high-entropy",
+        required_elements=["identify the value", "revoke at provider"],
+        required_gates=[None, "the remediation treats it as a live credential"],
+    )
+
+    assert result.pass_rate == 0.5
+    assert result.gate_answers == [True]
+
+
+def test_length_check_counts_gates_and_optional_elements_too():
+    text = json.dumps({"element_present": [True, True]})
+
+    with pytest.raises(ElementCheckParsingError):
+        parse_element_check(
+            make_response(text),
+            candidate_id="c1",
+            rule_id="high-entropy",
+            required_elements=["req1", "req2"],
+            optional_elements=["opt1"],
+            required_gates=[None, "a gate"],
+        )

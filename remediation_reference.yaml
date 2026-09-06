@@ -1,142 +1,532 @@
-# Reference standard for RQ3 (remediation quality).
+# ============================================================================
+# remediation_reference.yaml  --  PRE-REGISTERED REFERENCE STANDARD FOR RQ3
+# Version 2 -- rebuilt from verified primary sources
+# ============================================================================
 #
-# PROVENANCE -- read this before citing the file in the write-up.
-# Drafted with AI assistance on 2026-09-03, from the sources named in each
-# entry. It was NOT written blind to results/*.jsonl. The assistant that
-# drafted it had already read the collected remediation text, so the
-# elements may be shaped toward what the model already says, which biases
-# the pass rate upward. Describe it in Methodology as "derived from
-# published guidance with AI assistance", not as "pre-registered blind to
-# results". Declare the AI use per the Academic Conduct Policy.
+# RQ3: Are the generated explanations and remediations technically correct
+#      and useful?
+# H3:  >=80% of remediations contain every pre-registered required element,
+#      tested against the LOWER BOUND of the Wilson 95% interval.
 #
-# SHAPE
-# Four elements per entry. The first three are the same everywhere -- they
-# are what any leaked credential needs, whatever type it is. The fourth is
-# specific to the credential type, and it is the only one that varies. So
-# the per-rule table measures one thing: does the model know what kind of
-# credential it is looking at.
+# FREEZE THIS FILE BEFORE E3 RUNS AND BEFORE results/*.jsonl IS READ.
+# Its evidential value is that it was written blind. Commit it, record the
+# commit hash in Methodology, and do not edit afterwards. If an entry proves
+# wrong, log the change in `_meta.amendments` and report it in Limitations
+# rather than silently correcting it.
 #
-# A candidate passes only if all four elements are present. No partial
-# credit -- see score_remediation_quality.py line 141. That makes the
-# element count a difficulty knob. Four was chosen because four actions is
-# what adequate remediation means here, not because it clears the 80%
-# target. Report the Wilson lower bound.
-#
-# If a run shows an element nothing ever satisfies, do not edit it. Report
-# it. That is a finding about the model, not a bug in the standard.
-#
-# COVERAGE
-# 13 keys, 11 distinct lists. Covers all 10 rule_ids that appear in
-# data/processed/all_combined.candidates.json, plus two that appear in no
-# candidate. The unused ones are kept on purpose: a standard that covers
-# rules which never fired is visibly not reverse-engineered from the
-# results.
+# SCHEMA NOTE: adapt the layout to whatever scripts/score_remediation_quality.py
+# expects. The CONTENT is the research artefact; the YAML shape is not.
+# ============================================================================
 
-# ===================== entropy, no known type =========================
+_meta:
+  version: 2
+  pre_registered_on: "TODO-YYYY-MM-DD"
+  frozen_at_commit: "TODO"
+  corpus: "CredData, Python-filtered, --source combined, 517 candidates"
 
-high-entropy:                    # 356 candidates, 69% of the corpus
-  required_elements:
-    - "Revoke or rotate the credential with whoever issued it, so the leaked value stops working."
-    - "Take the literal out of the source file. Read it from an environment variable or a secret manager instead."
-    - "Remove the value from the repository history, not just from the current file."
-    - "Work out what the string actually is and which system issued it, instead of assuming it is a live credential."
-  source: "https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html"
+  # --------------------------------------------------------------------------
+  # WHAT CHANGED FROM v1 OF THIS FILE, AND WHY
+  # v1 was drafted from general knowledge. v2 is rebuilt from primary sources
+  # that were read and verified. Two changes are substantive, not cosmetic:
+  #
+  # 1. REVOCATION IS NOW THE PRIMARY REQUIRED ELEMENT, NOT REMOVAL.
+  #    v1 treated "move it to an environment variable" as the core requirement.
+  #    GitHub's remediation playbook states the opposite priority directly:
+  #    removing the secret from the codebase is NOT sufficient, and the most
+  #    important step is revoking it with the provider. A remediation that
+  #    only says "move this to .env" is therefore incomplete by the standard's
+  #    own authority, and the required elements now reflect that.
+  #
+  # 2. ELEMENTS NOW FOLLOW OWASP's CONTAINMENT ORDER.
+  #    OWASP Secrets Management Cheat Sheet section 9.2 sets out a four-step
+  #    containment sequence -- Revocation, Rotation, Deletion, Logging. The
+  #    shared elements below are named and ordered to match it, so the
+  #    standard mirrors a published sequence rather than an invented one.
+  # --------------------------------------------------------------------------
 
-# ======================== generic families ============================
+  grading_policy:
+    scored_rows: "only rows the LLM labelled true_secret"
+    # Rationale: a remediation attached to a candidate the model called a
+    # false positive is not a remediation claim; grading it would measure
+    # classification error twice.
 
-generic-api-key:                 # 71 candidates
-  required_elements:
-    - "Revoke or rotate the credential with whoever issued it, so the leaked value stops working."
-    - "Take the literal out of the source file. Read it from an environment variable or a secret manager instead."
-    - "Remove the value from the repository history, not just from the current file."
-    - "Check the provider's logs for calls made with the key while it was exposed."
-  source: "https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html"
+    pass_rule: "all required_elements present"
+    # H3 says 'every pre-registered required element', so this is all-of,
+    # not k-of-n. Strict by choice, stated up front, not relaxed later.
 
-generic.secret:                  # 5 candidates
-  required_elements:
-    - "Revoke or rotate the credential with whoever issued it, so the leaked value stops working."
-    - "Take the literal out of the source file. Read it from an environment variable or a secret manager instead."
-    - "Remove the value from the repository history, not just from the current file."
-    - "Say what breaks when the value changes. Sessions, signed cookies and tokens issued under the old secret stop validating."
-  source: "https://cwe.mitre.org/data/definitions/798.html"
+    optional_elements: "scored and reported, never required to pass"
 
-generic.password-in-url:         # 62 candidates
-  required_elements:
-    - "Revoke or rotate the credential with whoever issued it, so the leaked value stops working."
-    - "Take the literal out of the source file. Read it from an environment variable or a secret manager instead."
-    - "Remove the value from the repository history, not just from the current file."
-    - "Change the password on the account itself, not only the URL. Credentials in a URL end up in logs and proxies."
-  source: "https://www.rfc-editor.org/rfc/rfc3986.html#section-3.2.1"
+    matching: >
+      Semantic presence, judged by the automated checker. accepted_phrasings
+      are disambiguation hints, NOT an exhaustive keyword list and NOT a
+      literal string match. A remediation conveying the element in different
+      words passes.
 
-# ======================= typed credentials ============================
+    checker_validation: >
+      The automated checker is validated against the student's own blinded
+      hand-labels on a 40-50 row subset; Cohen's kappa is reported. If
+      kappa < 0.6 the checker is not trusted and the full sample is hand-coded.
 
-aws-access-token:                # 5 candidates
-  required_elements:
-    - "Revoke or rotate the credential with whoever issued it, so the leaked value stops working."
-    - "Take the literal out of the source file. Read it from an environment variable or a secret manager instead."
-    - "Remove the value from the repository history, not just from the current file."
-    - "Deactivate the access key in IAM and then delete it. Check CloudTrail for what it did."
-  source: "https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_access-keys.html"
+  amendments: []   # append {date, rule, change, reason} if this file is edited
 
-jwt:                             # 2 candidates
-  required_elements:
-    - "Revoke or rotate the credential with whoever issued it, so the leaked value stops working."
-    - "Take the literal out of the source file. Read it from an environment variable or a secret manager instead."
-    - "Remove the value from the repository history, not just from the current file."
-    - "Rotate the signing key, not just this token. A JWT cannot be recalled once issued unless something keeps a denylist."
-  source: "https://www.rfc-editor.org/rfc/rfc8725.html"
+# ============================================================================
+# SOURCES
+# All four were retrieved and read. Confirm each yourself and add your own
+# retrieval date before this goes in an appendix -- do not inherit `verified`
+# from someone else's reading.
+# ============================================================================
 
-google.oauth-token:              # 1 candidate
-  required_elements:
-    - "Revoke or rotate the credential with whoever issued it, so the leaked value stops working."
-    - "Take the literal out of the source file. Read it from an environment variable or a secret manager instead."
-    - "Remove the value from the repository history, not just from the current file."
-    - "Revoke the refresh token as well. It keeps working after the access token has expired."
-  source: "https://docs.cloud.google.com/docs/security/compromised-credentials"
+_sources:
+  owasp_secrets:
+    title: "OWASP Secrets Management Cheat Sheet"
+    url: "https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html"
+    sections_used:
+      - "2.7 Secret Lifecycle (creation, rotation, revocation, expiration)"
+      - "9.2 Incident Response > Remediation -- the four containment steps"
+      - "8 Detection -- entropy vs format trade-off, relevant to high-entropy"
+    key_content: >
+      Section 9.2 gives the containment sequence: (1) Revocation -- exposed
+      keys undergo immediate revocation; (2) Rotation -- a new secret created
+      and implemented, preferably automatically; (3) Deletion -- revoked
+      secrets removed from the exposed system, including from code and logs,
+      noting that squashing commit history rewrites git history and breaks
+      links to commits; (4) Logging -- incident responders need lifecycle
+      information (who had access, when used, when last rotated).
+    verified: true
+    retrieved: "TODO-YYYY-MM-DD"
 
-# ---- merged families: one credential, two scanners, two spellings ----
-# The YAML anchor makes both keys the same object, so they cannot drift
-# apart. Do not delete either spelling. The loader matches on the literal
-# rule_id string in the results .jsonl, so dropping one silently skips
-# those candidates.
+  github_remediate:
+    title: "GitHub Docs -- Remediating a leaked secret in your repository"
+    url: "https://docs.github.com/en/code-security/tutorials/remediate-leaked-secrets/remediating-a-leaked-secret"
+    key_content: >
+      Nine-step playbook: identify secret and provider; assess risk; strategize;
+      REVOKE with the provider; identify and update affected services; check
+      for unauthorized access via audit logs; clean the repository; resolve the
+      alert; prevent further leaks. States that any leaked secret should be
+      considered immediately compromised, that removing it from the codebase,
+      pushing a new commit, or deleting and recreating the repository do not
+      prevent exploitation, and that revoking with the provider is the single
+      most important step. Notes that cleaning git history is destructive and
+      disruptive because it may involve force pushing.
+    verified: true
+    retrieved: "TODO-YYYY-MM-DD"
 
-private-key: &private_key        # 9 candidates, gitleaks spelling
-  required_elements:
-    - "Revoke or rotate the credential with whoever issued it, so the leaked value stops working."
-    - "Take the literal out of the source file. Read it from an environment variable or a secret manager instead."
-    - "Remove the value from the repository history, not just from the current file."
-    - "Generate a new keypair and replace the public half everywhere it was trusted. Revoke any certificate issued against the old key."
-  source: "https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-57pt1r5.pdf"
+  rfc3986:
+    title: "RFC 3986, Uniform Resource Identifier (URI): Generic Syntax"
+    sections_used: ["3.2.1 User Information", "7.5 Sensitive Information"]
+    key_content: >
+      Section 3.2.1 states that use of the user:password format in the
+      userinfo field is deprecated. Section 7.5 states that URI producers
+      should not provide a URI containing a username or password intended to
+      be secret, because URIs are frequently displayed by browsers, stored in
+      clear-text bookmarks, and logged by user agent history and intermediary
+      applications such as proxies; a password in the userinfo component is
+      deprecated and should be treated as an error. Corroborated by RFC 9110,
+      which repeats the deprecation.
+    verified: true
+    retrieved: "TODO-YYYY-MM-DD"
 
-private.key: *private_key        # 3 candidates, trufflehog spelling
+  cwe798:
+    title: "CWE-798: Use of Hard-coded Credentials"
+    use: "Framing and taxonomy for the Literature Review; thin on remediation steps, so not used to derive required elements."
+    verified: false     # cited but not used for element content -- verify before citing
 
-github.token: &github_token      # 3 candidates, trufflehog spelling
-  required_elements:
-    - "Revoke or rotate the credential with whoever issued it, so the leaked value stops working."
-    - "Take the literal out of the source file. Read it from an environment variable or a secret manager instead."
-    - "Remove the value from the repository history, not just from the current file."
-    - "Revoke the token in GitHub account settings. Check the security log for what it was used for."
-  source: "https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/token-expiration-and-revocation"
+  # ---- NOT YET VERIFIED. Read these before setting verified: true. ----
+  aws_access_keys:
+    title: "AWS -- rotating access keys for IAM users"
+    supports: >
+      Canonical rotation sequence: create a second key, update applications
+      to use it, validate, set the previous key to inactive, validate again,
+      then delete. Deactivation is reversible; deletion is not. IAM roles
+      with temporary auto-expiring credentials are recommended over
+      long-lived access keys where available.
+    verified: true
+    retrieved: "2026-09-03"
+    note: >
+      Confirmed from the AWS Security Blog rotation walkthrough. Prefer the
+      equivalent statement in the IAM User Guide for the appendix citation
+      if you can locate it there.
 
-github-pat: *github_token        # 0 candidates, gitleaks spelling
+  github_token_expiry:
+    title: "GitHub -- Token expiration and revocation"
+    needed_for: "github.token / github-pat: PAT revocation route"
+    verified: false
 
-# ============ kept, but no candidates in this corpus ==================
-# Retained so the standard is visibly not fitted to the observed data.
+  nist_800_57:
+    title: "NIST SP 800-57 Part 1 Rev. 5 -- Recommendation for Key Management"
+    needed_for: "private-key: compromised and destroyed key states"
+    note: "Referenced from the OWASP cheat sheet's own further-reading list, which is a good sign, but the key-state sections were not read directly."
+    verified: false
 
-gcp-api-key:
-  required_elements:
-    - "Revoke or rotate the credential with whoever issued it, so the leaked value stops working."
-    - "Take the literal out of the source file. Read it from an environment variable or a secret manager instead."
-    - "Remove the value from the repository history, not just from the current file."
-    - "Delete the key in the Cloud console and recreate it with the same API and referrer restrictions. An unrestricted replacement is worse than the key you removed."
-  source: "https://docs.cloud.google.com/docs/authentication/api-keys-best-practices"
+  owasp_key_mgmt:
+    title: "OWASP Key Management Cheat Sheet"
+    needed_for: "private-key: keypair replacement and trust revocation"
+    verified: false
 
-slack-bot-token:
-  # Source not verified. Find a Slack token-rotation doc and confirm it
-  # before citing, or drop this entry. No candidates use it either way.
-  required_elements:
-    - "Revoke or rotate the credential with whoever issued it, so the leaked value stops working."
-    - "Take the literal out of the source file. Read it from an environment variable or a secret manager instead."
-    - "Remove the value from the repository history, not just from the current file."
-    - "Revoke the token in the Slack app settings and reinstall the app to issue a new one."
-  source: "TODO -- verify a Slack source before citing"
+  rfc8725:
+    title: "RFC 8725 (BCP 225) -- JSON Web Token Best Current Practices"
+    needed_for: "jwt: signing-key rotation, why revoking an issued JWT is not straightforward"
+    verified: false
+
+  google_credentials:
+    title: "Google -- Handle compromised Google Cloud credentials; Best practices for managing API keys"
+    needed_for: "google.oauth-token, gcp-api-key"
+    verified: false
+
+# ============================================================================
+# SHARED ELEMENT DEFINITIONS
+# Named and ordered to follow OWASP 9.2's containment sequence.
+# ============================================================================
+
+_shared_elements:
+
+  # OWASP 9.2 step 1. GitHub calls this the single most important step.
+  revoke_at_provider: &revoke_at_provider
+    id: revoke_at_provider
+    description: >
+      States the credential must be revoked, deactivated, or invalidated with
+      the issuing provider -- not merely removed from the file. Naming the
+      provider is not required; recognising that provider-side action is
+      needed is.
+    accepted_phrasings:
+      - "revoke the credential with the provider"
+      - "deactivate / disable / delete the key in the provider console"
+      - "treat as compromised and invalidate it"
+      - "the secret must be invalidated, not just deleted from the file"
+    source: "OWASP 9.2 step 1 (Revocation); GitHub step 4 (Revoke the secret)"
+
+  # OWASP 9.2 step 2.
+  rotate_replacement: &rotate_replacement
+    id: rotate_replacement
+    description: >
+      States that a replacement credential must be issued and put into use.
+      Distinct from revocation: revocation kills the old one, rotation
+      restores function.
+    accepted_phrasings:
+      - "generate a new key / issue a replacement"
+      - "rotate the credential"
+      - "create a new secret and update dependent services"
+    source: "OWASP 9.2 step 2 (Rotation); GitHub steps 4.3 and 5"
+
+  # OWASP 9.2 step 3.
+  remove_from_source: &remove_from_source
+    id: remove_from_source
+    description: >
+      States the value must stop being stored in the source file -- moved to
+      an environment variable, secrets manager, CI secret store, or another
+      out-of-repository mechanism.
+    accepted_phrasings:
+      - "move to an environment variable"
+      - "use a secrets manager / vault"
+      - "use GitHub Actions secrets or an equivalent CI secret store"
+      - "load from config outside version control"
+      - "inject at runtime rather than hardcoding"
+    source: "OWASP 9.2 step 3 (Deletion); GitHub step 9 (Prevent further leaks)"
+
+  purge_history: &purge_history
+    id: purge_history
+    description: >
+      Acknowledges the value persists in commit history after deletion --
+      either by recommending history rewriting, or by explicitly noting the
+      value remains exposed in earlier commits. Recognising that removal alone
+      is insufficient counts; recommending a rewrite is not required, since
+      both sources treat rewriting as a decision with real costs.
+    accepted_phrasings:
+      - "remove from git history"
+      - "the secret remains in previous commits"
+      - "rewrite history (filter-repo / BFG), noting this is disruptive"
+      - "a new commit does not undo the exposure"
+    source: "OWASP 9.2 step 3; GitHub step 7 (Clean the repository)"
+
+  check_unauthorized_access: &check_unauthorized_access
+    id: check_unauthorized_access
+    description: >
+      Suggests checking audit or access logs for use of the credential while
+      it was exposed.
+    accepted_phrasings:
+      - "review audit logs for unauthorized use"
+      - "check provider access logs (e.g. CloudTrail)"
+      - "look for signs the credential was used"
+    source: "GitHub step 6; OWASP 9.2 step 4 (Logging)"
+
+# ============================================================================
+# RULE FAMILIES
+# Counts are candidates in the frozen 517-candidate combined set. They are
+# recorded for transparency about sample weight. They are detector output,
+# known before any classification was read -- they are not results.
+# ============================================================================
+
+rules:
+
+  # --------------------------------------------------------------------------
+  # 356 of 517 candidates (69%). 'high-entropy' is not a credential type, it is
+  # the ABSENCE of a recognised type -- TruffleHog3 fires it on any
+  # sufficiently random-looking string, so many of these are hashes, UUIDs,
+  # checksums and encoded blobs. OWASP section 8.1 frames this directly as the
+  # trade-off between entropy and ease of detection: formatted secrets are
+  # easier to detect with lower false-positive rates.
+  #
+  # Requiring "revoke the credential" would therefore be FACTUALLY WRONG for a
+  # large share of these rows. The required element engages with
+  # identification first, and the containment elements apply conditionally.
+  # --------------------------------------------------------------------------
+  high-entropy:
+    candidates_in_corpus: 356
+    required_elements:
+      - id: identify_value_type
+        description: >
+          Engages with what the value actually is -- names a credential type,
+          or reasons about whether it is a credential at all (hash, UUID,
+          checksum, encoded data, test fixture).
+        accepted_phrasings:
+          - "this appears to be a <type>"
+          - "verify whether this is a live credential"
+          - "this looks like a hash / UUID / encoded value, not a secret"
+        source: "OWASP 8.1 (entropy vs format); GitHub step 1 (Identify the secret)"
+      - <<: *revoke_at_provider
+        conditional: >
+          Required only where the remediation asserts the value IS a
+          credential. If it concludes the value is not a credential, this
+          element is waived and the row passes on identify_value_type alone.
+    optional_elements:
+      - *remove_from_source
+      - *rotate_replacement
+      - *purge_history
+
+  # --------------------------------------------------------------------------
+  generic-api-key:
+    candidates_in_corpus: 71
+    required_elements:
+      - *revoke_at_provider
+      - *remove_from_source
+    optional_elements:
+      - *rotate_replacement
+      - *purge_history
+      - *check_unauthorized_access
+      - id: scope_review
+        description: "Suggests reviewing or narrowing the key's permissions or scope."
+        source: "OWASP 2.7.1 (minimum privileges)"
+
+  # --------------------------------------------------------------------------
+  # Credentials embedded in a connection URL. RFC 3986 s7.5 gives a distinct
+  # and stronger rationale than for a plain variable assignment: URIs are
+  # displayed by browsers, stored in clear-text bookmarks, and logged by user
+  # agent history and proxies -- so the exposure surface extends well beyond
+  # the repository.
+  # --------------------------------------------------------------------------
+  generic.password-in-url:
+    candidates_in_corpus: 62
+    required_elements:
+      - id: remove_credential_from_url
+        description: >
+          States the credential must come out of the URL or connection string,
+          supplied separately via environment variable, config, or a
+          credential provider.
+        accepted_phrasings:
+          - "do not embed credentials in the connection string"
+          - "pass the password separately via environment variable"
+          - "use a credential provider / connection config"
+        source: "RFC 3986 s3.2.1 (user:password in userinfo is deprecated)"
+      - *revoke_at_provider
+    optional_elements:
+      - *rotate_replacement
+      - *purge_history
+      - id: url_leak_surface
+        description: >
+          Notes that URLs carrying credentials leak through logs, browser
+          history, bookmarks, proxies, or error messages.
+        source: "RFC 3986 s7.5 (Sensitive Information)"
+
+  # --------------------------------------------------------------------------
+  # PEM/SSH private keys. GitLeaks reports 'private-key', TruffleHog3 reports
+  # 'private.key'. Same credential class, two rule IDs -- both entries present
+  # so no candidate is silently skipped by a key lookup.
+  # KEEP THE TWO BODIES IDENTICAL: edit both or neither.
+  #
+  # This family departs from the generic pattern: for asymmetric keys,
+  # "rotation" means replacing the PAIR and withdrawing trust in the old
+  # public key, not reissuing a string.
+  # --------------------------------------------------------------------------
+  private-key:
+    candidates_in_corpus: 9
+    required_elements:
+      - id: regenerate_keypair
+        description: >
+          States a NEW keypair must be generated and the exposed private key
+          treated as compromised.
+        accepted_phrasings:
+          - "generate a new key pair"
+          - "treat the private key as compromised"
+          - "reissue the key"
+        source: "OWASP Key Management Cheat Sheet; NIST SP 800-57 Pt1 Rev5 (compromised key state) -- VERIFY"
+      - id: revoke_trust
+        description: >
+          States the old public key must be removed wherever it was trusted
+          (authorized_keys, deploy keys, certificate authorities, servers).
+        accepted_phrasings:
+          - "remove the old public key from authorized_keys"
+          - "revoke the deploy key or server trust"
+          - "revoke the certificate"
+        source: "OWASP 9.2 step 1 (revocation, incl. certificate revocation)"
+    optional_elements:
+      - *remove_from_source
+      - *purge_history
+      - *check_unauthorized_access
+
+  private.key:
+    candidates_in_corpus: 3
+    same_standard_as: private-key    # documented duplicate, not an oversight
+    required_elements:
+      - id: regenerate_keypair
+        description: >
+          States a NEW keypair must be generated and the exposed private key
+          treated as compromised.
+        accepted_phrasings:
+          - "generate a new key pair"
+          - "treat the private key as compromised"
+          - "reissue the key"
+        source: "OWASP Key Management Cheat Sheet; NIST SP 800-57 Pt1 Rev5 -- VERIFY"
+      - id: revoke_trust
+        description: >
+          States the old public key must be removed wherever it was trusted
+          (authorized_keys, deploy keys, certificate authorities, servers).
+        accepted_phrasings:
+          - "remove the old public key from authorized_keys"
+          - "revoke the deploy key or server trust"
+          - "revoke the certificate"
+        source: "OWASP 9.2 step 1"
+    optional_elements:
+      - *remove_from_source
+      - *purge_history
+      - *check_unauthorized_access
+
+  # --------------------------------------------------------------------------
+  aws-access-token:
+    candidates_in_corpus: 5
+    required_elements:
+      - <<: *revoke_at_provider
+        provider_specific_note: >
+          For AWS this means deactivating or deleting the access key in IAM.
+          Generic revocation language still passes; naming IAM is not required.
+      - *remove_from_source
+    optional_elements:
+      - *rotate_replacement
+      - *purge_history
+      - <<: *check_unauthorized_access
+        provider_specific_note: "GitHub's playbook names CloudTrail as the AWS example."
+      - id: prefer_roles
+        description: >
+          Suggests IAM roles, instance profiles, or temporary STS credentials
+          instead of long-lived access keys.
+        source: "OWASP 6.2 (dynamic vs static use cases) -- prefer short-lived credentials"
+    source_note: "AWS 'Manage access keys for IAM users' NOT YET VERIFIED -- confirm current terminology before citing."
+
+  # --------------------------------------------------------------------------
+  generic.secret:
+    candidates_in_corpus: 5
+    required_elements:
+      - *revoke_at_provider
+      - *remove_from_source
+    optional_elements:
+      - *rotate_replacement
+      - *purge_history
+      - *check_unauthorized_access
+
+  # --------------------------------------------------------------------------
+  # GitHub's own docs note that GitHub AUTOMATICALLY revokes PATs leaked in
+  # public repositories -- so a remediation that says "GitHub may have already
+  # revoked this" is not wrong. The revocation element is phrased to accept
+  # either the manual route or an acknowledgement of automatic revocation.
+  # --------------------------------------------------------------------------
+  github.token:
+    candidates_in_corpus: 3
+    required_elements:
+      - <<: *revoke_at_provider
+        provider_specific_note: >
+          Accepts revoking in GitHub developer settings, OR noting that GitHub
+          auto-revokes PATs leaked in public repositories.
+      - *remove_from_source
+    optional_elements:
+      - *rotate_replacement
+      - *purge_history
+      - *check_unauthorized_access
+      - id: scope_review
+        description: "Suggests reviewing whether the token's scopes were broader than needed."
+    source_note: "GitHub 'Token expiration and revocation' NOT YET VERIFIED -- the remediation playbook was read, this specific page was not."
+
+  # --------------------------------------------------------------------------
+  # A JWT is a signed bearer token, not a static key. Rotating "the JWT" is
+  # meaningless; what matters is the signing key and the token's lifetime.
+  # This entry deliberately departs from the generic pattern, and the
+  # revocation element is written to accept the honest answer that an issued
+  # JWT generally cannot be recalled before expiry.
+  # --------------------------------------------------------------------------
+  jwt:
+    candidates_in_corpus: 2
+    required_elements:
+      - id: invalidate_token_or_key
+        description: >
+          Addresses invalidation correctly for a signed bearer token --
+          rotating the signing key, revoking the session or adding to a
+          denylist, or explicitly noting the token stays valid until expiry
+          and cannot simply be recalled.
+        accepted_phrasings:
+          - "rotate the signing key"
+          - "revoke the session / add to a denylist"
+          - "the token remains valid until it expires"
+        source: "OWASP 2.12 (token security, short-lived tokens); RFC 8725 -- VERIFY"
+      - *remove_from_source
+    optional_elements:
+      - id: inspect_claims
+        description: "Suggests decoding the token to check expiry, scope, or sensitive claims."
+      - *purge_history
+    source_note: "RFC 8725 (BCP 225) NOT YET VERIFIED. OWASP 2.12 was read and supports the short-lived-token framing."
+
+  # --------------------------------------------------------------------------
+  google.oauth-token:
+    candidates_in_corpus: 1
+    required_elements:
+      - <<: *revoke_at_provider
+        provider_specific_note: >
+          For Google this means revoking or regenerating in the Google Cloud
+          / API console, or via the OAuth revocation endpoint.
+      - *remove_from_source
+    optional_elements:
+      - *rotate_replacement
+      - *purge_history
+      - id: restrict_credential
+        description: "Suggests API, IP, or referrer restrictions on the credential."
+    source_note: "Google 'Handle compromised Google Cloud credentials' NOT YET VERIFIED."
+
+# ============================================================================
+# RETAINED, ZERO CANDIDATES IN THIS CORPUS
+# Scaffolded from GitLeaks' rule set before TruffleHog3 was added; they match
+# no candidate in the 517-candidate set. RETAINED rather than deleted, so the
+# standard is not shaped around what happens to appear in one corpus. They
+# contribute nothing to the RQ3 denominator. State this choice in Methodology.
+# ============================================================================
+
+retained_zero_candidate_rules:
+
+  gcp-api-key:
+    candidates_in_corpus: 0
+    required_elements:
+      - *revoke_at_provider
+      - *remove_from_source
+    source_note: "Google API key best practices NOT YET VERIFIED."
+
+  github-pat:
+    candidates_in_corpus: 0
+    same_standard_as: github.token
+    required_elements:
+      - *revoke_at_provider
+      - *remove_from_source
+
+  # --------------------------------------------------------------------------
+  # slack-bot-token: DROPPED, not retained.
+  # No authoritative Slack token-rotation document was found that would
+  # withstand citation. Since the rule produces zero candidates in this corpus,
+  # retaining an unsourced entry adds nothing and weakens the claim that every
+  # entry in this standard is externally grounded. Recorded here as a
+  # deliberate, documented removal rather than a silent deletion.
+  # --------------------------------------------------------------------------

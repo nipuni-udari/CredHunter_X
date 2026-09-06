@@ -50,7 +50,15 @@ from credhunter_x.evaluation.labeler import (
     index_ground_truth,
     match_candidate,
 )
-from credhunter_x.evaluation.metrics import compute_metrics, mcnemar_test
+from credhunter_x.evaluation.metrics import (
+    agreement_vectors,
+    bootstrap_ci,
+    candidate_confusion,
+    compute_metrics,
+    false_positive_rate,
+    matthews_corrcoef,
+    mcnemar_test,
+)
 from credhunter_x.evaluation.result_files import result_stem
 from credhunter_x.gitleaks.parser import parse_gitleaks_report
 from credhunter_x.gitleaks.runner import run_gitleaks
@@ -178,8 +186,12 @@ def _print_report(report: MetricReport) -> None:
     print(f"recall       : {report.recall:.3f}")
     print(f"f1           : {report.f1:.3f}")
     if report.mcnemar_stat is not None:
-        print(f"mcnemar stat : {report.mcnemar_stat:.3f}")
+        print(f"mcnemar stat : {report.mcnemar_stat:.3f}   (correct = flagged AND real)")
         print(f"mcnemar p    : {report.mcnemar_p_value:.4f}")
+    if report.mcnemar_agreement_stat is not None:
+        print(f"agreement chi2: {report.mcnemar_agreement_stat:.3f}  (correct = agrees with truth)")
+        print(f"agreement p   : {report.mcnemar_agreement_p_value:.4f}")
+        print(f"agreement n   : {report.mcnemar_agreement_n}  (LOST excluded)")
     print("=" * 60)
 
 
@@ -214,6 +226,9 @@ def _write_results(
                 "line_end": c.line_end,
                 "rule_id": c.rule_id,
                 "real_secret_length": len(c.matched_value),
+                # Which scanner found it. Older result files predate this
+                # field, so read it with .get() or guard for its absence.
+                "source": c.source,
                 "ground_truth_outcome": match_candidate(c, gt_index).value,
                 "label": cl.label.value,
                 "confidence": cl.confidence,
@@ -253,6 +268,18 @@ def _write_results(
             "f1": report.f1,
             "mcnemar_stat": report.mcnemar_stat,
             "mcnemar_p_value": report.mcnemar_p_value,
+            "mcnemar_agreement_stat": report.mcnemar_agreement_stat,
+            "mcnemar_agreement_p_value": report.mcnemar_agreement_p_value,
+            "mcnemar_agreement_n": report.mcnemar_agreement_n,
+            "true_positive": report.true_positive,
+            "false_positive": report.false_positive,
+            "false_negative": report.false_negative,
+            "true_negative": report.true_negative,
+            "candidate_f1": report.candidate_f1,
+            "false_positive_rate": report.false_positive_rate,
+            "mcc": report.mcc,
+            "precision_ci_low": report.precision_ci_low,
+            "precision_ci_high": report.precision_ci_high,
         },
     }
     summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
@@ -395,18 +422,26 @@ def _run_llm_arm(
     # same as a scanner that never generated a candidate here in the first place.
     outcomes = []
     correct = []
+    all_outcomes = []
+    all_flagged = []
     for result in scan_results:
         flagged = result.classification.label == Label.TRUE_SECRET
         outcome = match_candidate(result.candidate, gt_index)
         if flagged:
             outcomes.append(outcome)
         correct.append(flagged and outcome == MatchOutcome.TRUE_POSITIVE)
+        all_outcomes.append(outcome)
+        all_flagged.append(flagged)
 
     report = compute_metrics(
         outcomes, total_true_count=total_true_count, arm=arm_name, treatment=treatment.value
     )
 
     stat, p_value = mcnemar_test(detector_correct, correct)
+    detector_agrees, llm_agrees = agreement_vectors(all_outcomes, all_flagged)
+    agree_stat, agree_p = mcnemar_test(detector_agrees, llm_agrees)
+    counts = candidate_confusion(all_outcomes, all_flagged)
+    ci_low, ci_high = bootstrap_ci(all_outcomes, all_flagged, lambda c: c.precision)
     report = MetricReport(
         arm=report.arm,
         treatment=report.treatment,
@@ -417,6 +452,18 @@ def _run_llm_arm(
         lost_count=report.lost_count,
         mcnemar_stat=stat,
         mcnemar_p_value=p_value,
+        mcnemar_agreement_stat=agree_stat,
+        mcnemar_agreement_p_value=agree_p,
+        mcnemar_agreement_n=len(llm_agrees),
+        true_positive=counts.true_positive,
+        false_positive=counts.false_positive,
+        false_negative=counts.false_negative,
+        true_negative=counts.true_negative,
+        candidate_f1=counts.f1,
+        false_positive_rate=false_positive_rate(counts),
+        mcc=matthews_corrcoef(counts),
+        precision_ci_low=ci_low,
+        precision_ci_high=ci_high,
     )
 
     _write_results(

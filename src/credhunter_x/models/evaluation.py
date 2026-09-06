@@ -27,3 +27,20 @@ class MetricReport:
     lost_count: int = 0  # no matching ground-truth row; excluded from precision/recall/F1
     mcnemar_stat: float | None = None
     mcnemar_p_value: float | None = None
+    # Second McNemar, "correct = agrees with ground truth". Reported
+    # alongside the pair above, which can't favour the LLM by construction
+    # -- see metrics.agreement_vectors. n is after dropping LOST.
+    mcnemar_agreement_stat: float | None = None
+    mcnemar_agreement_p_value: float | None = None
+    mcnemar_agreement_n: int | None = None
+    # E1's remaining metrics, all candidate-level with LOST excluded.
+    # precision/recall/f1 above stay corpus-level and are unchanged.
+    true_positive: int | None = None
+    false_positive: int | None = None
+    false_negative: int | None = None
+    true_negative: int | None = None
+    candidate_f1: float | None = None
+    false_positive_rate: float | None = None
+    mcc: float | None = None
+    precision_ci_low: float | None = None
+    precision_ci_high: float | None = None

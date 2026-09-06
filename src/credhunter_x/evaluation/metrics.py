@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import math
+import random
 from collections import Counter
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 
 from scipy.stats import chi2, norm
 
@@ -56,6 +60,156 @@ def mcnemar_test(correct_a: list[bool], correct_b: list[bool]) -> tuple[float, f
     statistic = (abs(only_a_correct - only_b_correct) - 1) ** 2 / discordant
     p_value = float(chi2.sf(statistic, df=1))
     return statistic, p_value
+
+
+def agreement_vectors(
+    outcomes: list[MatchOutcome], flagged: list[bool]
+) -> tuple[list[bool], list[bool]]:
+    """Paired correctness for a detector-vs-LLM McNemar, where "correct"
+    means the prediction agrees with ground truth.
+
+    The other definition -- correct = flagged AND really a secret -- makes
+    the LLM's correct set a strict subset of the detector's, since the
+    detector flags every candidate it generated. One McNemar cell is then
+    structurally zero and the test can't favour the LLM however well it
+    does: a correctly suppressed false positive counts as wrong for both.
+    Both are reported; this is the pair that answers RQ1.
+
+    LOST is dropped -- with no ground-truth row there's nothing to agree
+    with, matching compute_metrics, which excludes it from precision."""
+    if len(outcomes) != len(flagged):
+        raise ValueError("outcomes and flagged must be the same length (paired candidates)")
+
+    detector_agrees: list[bool] = []
+    llm_agrees: list[bool] = []
+    for outcome, is_flagged in zip(outcomes, flagged, strict=True):
+        if outcome is MatchOutcome.LOST:
+            continue
+        is_secret = outcome is MatchOutcome.TRUE_POSITIVE
+        detector_agrees.append(is_secret)  # the detector flagged all of them
+        llm_agrees.append(is_flagged == is_secret)
+    return detector_agrees, llm_agrees
+
+
+@dataclass(frozen=True)
+class ConfusionCounts:
+    """Candidate-level confusion. Distinct from compute_metrics, whose
+    recall denominator is every secret in the corpus, not just candidates."""
+
+    true_positive: int
+    false_positive: int
+    false_negative: int
+    true_negative: int
+
+    @property
+    def precision(self) -> float:
+        flagged = self.true_positive + self.false_positive
+        return self.true_positive / flagged if flagged else 0.0
+
+    @property
+    def recall(self) -> float:
+        real = self.true_positive + self.false_negative
+        return self.true_positive / real if real else 0.0
+
+    @property
+    def f1(self) -> float:
+        p, r = self.precision, self.recall
+        return 2 * p * r / (p + r) if p + r else 0.0
+
+
+def candidate_confusion(
+    outcomes: Sequence[MatchOutcome], flagged: Sequence[bool]
+) -> ConfusionCounts:
+    """LOST is dropped -- with no ground-truth row there's nothing to be
+    right or wrong about, the same exclusion compute_metrics applies."""
+    if len(outcomes) != len(flagged):
+        raise ValueError("outcomes and flagged must be the same length (paired candidates)")
+
+    tp = fp = fn = tn = 0
+    for outcome, is_flagged in zip(outcomes, flagged, strict=True):
+        if outcome is MatchOutcome.LOST:
+            continue
+        is_secret = outcome is MatchOutcome.TRUE_POSITIVE
+        if is_flagged and is_secret:
+            tp += 1
+        elif is_flagged:
+            fp += 1
+        elif is_secret:
+            fn += 1
+        else:
+            tn += 1
+    return ConfusionCounts(tp, fp, fn, tn)
+
+
+def matthews_corrcoef(counts: ConfusionCounts) -> float:
+    """MCC stays honest on unbalanced classes where F1 flatters. Returns
+    0.0 when a row or column is empty -- undefined, conventionally
+    reported as no correlation. A flag-everything detector scores 0.0."""
+    tp, fp = counts.true_positive, counts.false_positive
+    fn, tn = counts.false_negative, counts.true_negative
+    denominator = math.sqrt((tp + fp) * (tp + fn) * (tn + fp) * (tn + fn))
+    return ((tp * tn) - (fp * fn)) / denominator if denominator else 0.0
+
+
+def false_positive_rate(counts: ConfusionCounts) -> float:
+    """Share of non-secret candidates that still got flagged."""
+    negatives = counts.false_positive + counts.true_negative
+    return counts.false_positive / negatives if negatives else 0.0
+
+
+def bootstrap_ci(
+    outcomes: Sequence[MatchOutcome],
+    flagged: Sequence[bool],
+    statistic: Callable[[ConfusionCounts], float],
+    *,
+    resamples: int = 2000,
+    confidence: float = 0.95,
+    seed: int = 42,
+) -> tuple[float, float]:
+    """Percentile bootstrap over candidates. Captures sampling variation --
+    which candidates the scanners happened to produce -- and NOT run-to-run
+    LLM variation, which needs repeated runs instead. Seeded, so a rerun
+    reproduces the interval exactly."""
+    if len(outcomes) != len(flagged):
+        raise ValueError("outcomes and flagged must be the same length (paired candidates)")
+    if resamples < 1:
+        raise ValueError("resamples must be at least 1")
+    if not 0.0 < confidence < 1.0:
+        raise ValueError("confidence must be between 0 and 1")
+
+    paired = [(o, f) for o, f in zip(outcomes, flagged, strict=True) if o is not MatchOutcome.LOST]
+    if not paired:
+        return 0.0, 0.0
+
+    rng = random.Random(seed)
+    n = len(paired)
+    values = []
+    for _ in range(resamples):
+        drawn = [paired[rng.randrange(n)] for _ in range(n)]
+        values.append(statistic(candidate_confusion([o for o, _ in drawn], [f for _, f in drawn])))
+    values.sort()
+
+    tail = (1.0 - confidence) / 2.0
+    low = values[min(resamples - 1, int(tail * resamples))]
+    high = values[min(resamples - 1, int((1.0 - tail) * resamples))]
+    return low, high
+
+
+def stratify_by_rule(
+    rule_ids: Sequence[str], outcomes: Sequence[MatchOutcome], flagged: Sequence[bool]
+) -> dict[str, ConfusionCounts]:
+    """Per-rule confusion, so "where does the LLM actually help" is
+    answerable rather than asserted."""
+    if not len(rule_ids) == len(outcomes) == len(flagged):
+        raise ValueError("rule_ids, outcomes and flagged must be the same length")
+
+    grouped: dict[str, list[tuple[MatchOutcome, bool]]] = {}
+    for rule_id, outcome, is_flagged in zip(rule_ids, outcomes, flagged, strict=True):
+        grouped.setdefault(rule_id, []).append((outcome, is_flagged))
+    return {
+        rule_id: candidate_confusion([o for o, _ in rows], [f for _, f in rows])
+        for rule_id, rows in grouped.items()
+    }
 
 
 def cohens_kappa(rater_a: list[object], rater_b: list[object]) -> float:
