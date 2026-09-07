@@ -18,6 +18,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import TextIO
 
 from credhunter_x.config.settings import Settings
 from credhunter_x.evaluation.metrics import wilson_score_interval
@@ -28,9 +29,10 @@ from credhunter_x.evaluation.remediation_scoring import (
     score_remediation,
 )
 from credhunter_x.evaluation.result_files import result_stem
+from credhunter_x.guard.errors import LeakError
 from credhunter_x.guard.leak_guard import LeakGuard
 from credhunter_x.llm.guarded_client import GuardedLLMClient
-from credhunter_x.llm.litellm_client import LiteLLMClient
+from credhunter_x.llm.litellm_client import LiteLLMClient, LiteLLMClientError
 from credhunter_x.masking.secret_registry import SecretRegistry
 from credhunter_x.models.candidate import Candidate
 
@@ -54,6 +56,74 @@ def _print_report(by_rule: dict[str, list[bool]], all_passes: list[bool]) -> Non
     print(f"{'OVERALL':<20} {n_pass}/{n} pass  (95% CI: {lower:.3f}-{upper:.3f})")
     print(f"{'vs 80% target':<20} {verdict} (CI lower bound {lower:.3f} vs 0.80)")
     print("=" * 60)
+
+
+DENOMINATOR_NOTE = (
+    "per-arm pass rate: over each arm's full scoreable set. "
+    "arm comparison: paired on the candidates BOTH arms flagged -- rows only "
+    "one arm flagged have nothing to pair against and are excluded there."
+)
+
+
+def _row(result: ElementCheckResult) -> dict[str, object]:
+    """One scored remediation. Shared by the live sidecar and the summary
+    file so the durable copy and the reported copy cannot drift apart."""
+    return {
+        "candidate_id": result.candidate_id,
+        "rule_id": result.rule_id,
+        "required_elements": result.required_elements,
+        "element_present": result.element_present,
+        "optional_elements": result.optional_elements,
+        "optional_present": result.optional_present,
+        "gate_answers": result.gate_answers,
+        "pass_rate": result.pass_rate,
+        "passed": result.pass_rate == 1.0,
+        "raw_model_output": result.raw_model_output,
+    }
+
+
+def _open_sidecar(out_path: Path) -> TextIO:
+    """Rows land here as they complete. The summary JSON is written once at
+    the end, so without this a kill at row 400 of 459 loses all 400."""
+    path = out_path.with_suffix(".rows.jsonl")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    print(f"streaming rows to {path}", flush=True)
+    return path.open("w", encoding="utf-8")
+
+
+def _write_rows(
+    path: Path,
+    results: list[ElementCheckResult],
+    *,
+    stem: str,
+    args: argparse.Namespace,
+    blocked: list[str] | None = None,
+    failed: list[str] | None = None,
+) -> None:
+    """One record per scored remediation, plus the run's own settings.
+
+    The checker is an LLM and does not repeat itself exactly, so these
+    verdicts cannot be regenerated -- a reported pass rate is only auditable
+    if the rows behind it were written down at the time. Cohen's kappa also
+    needs the per-row answers to line up against the hand-labels.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "source_run": stem,
+        "arm": args.arm,
+        "treatment": args.treatment,
+        "checker_model": args.model,
+        "limit": args.limit,
+        "excluded_rules": args.exclude_rule,
+        "n_scored": len(results),
+        "n_passed": sum(1 for r in results if r.pass_rate == 1.0),
+        "guard_blocked": blocked or [],
+        "client_failed": failed or [],
+        "denominators": DENOMINATOR_NOTE,
+        "rows": [_row(r) for r in results],
+    }
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    print(f"\n{len(results)} row(s) written to {path}")
 
 
 def _print_optional_report(results: list[ElementCheckResult]) -> None:
@@ -106,6 +176,16 @@ def main() -> None:
         metavar="RULE_ID",
         help="skip a rule family; repeatable",
     )
+    parser.add_argument(
+        "--out",
+        default=None,
+        metavar="PATH",
+        help=(
+            "write per-row verdicts to a JSON file. Use it on every real run: "
+            "the checker is not deterministic, so a run scored without --out "
+            "cannot be reconstructed, and Cohen's kappa needs the per-row answers"
+        ),
+    )
     args = parser.parse_args()
 
     settings = Settings()
@@ -150,6 +230,9 @@ def main() -> None:
 
     results: list[ElementCheckResult] = []
     skipped = 0
+    blocked: list[str] = []
+    failed: list[str] = []
+    sidecar = _open_sidecar(Path(args.out)) if args.out else None
     for row in scoreable_rows:
         if args.limit is not None and len(results) >= args.limit:
             break
@@ -178,8 +261,39 @@ def main() -> None:
             print(f"  skipping {row['candidate_id']}: {exc}", flush=True)
             skipped += 1
             continue
+        except LeakError:
+            # The guard already refused the call -- nothing left the machine.
+            # Dropping the row rather than aborting mirrors the orchestrator's
+            # skip_candidate_on_error, which is why the classification runs
+            # survived the same block. Counted separately from `skipped`
+            # because an unscoreable row is a finding, not a technicality.
+            print(f"  guard blocked {row['candidate_id']} -- excluded", flush=True)
+            blocked.append(row["candidate_id"])
+            continue
+        except LiteLLMClientError as exc:
+            # Same policy as the orchestrator: a transport failure drops the
+            # row, it does not end a 459-call run.
+            print(f"  client error on {row['candidate_id']}: {exc}", flush=True)
+            failed.append(row["candidate_id"])
+            continue
         results.append(result)
+        if sidecar is not None:
+            sidecar.write(json.dumps(_row(result)) + "\n")
+            sidecar.flush()
 
+    if sidecar is not None:
+        sidecar.close()
+    if failed:
+        print(f"  {len(failed)} row(s) lost to client errors:", flush=True)
+        for cid in failed:
+            print(f"    {cid}", flush=True)
+    if blocked:
+        print(
+            f"  {len(blocked)} row(s) blocked by the egress guard and excluded from scoring:",
+            flush=True,
+        )
+        for cid in blocked:
+            print(f"    {cid}", flush=True)
     if skipped:
         print(
             f"  {skipped} row(s) skipped (no reference entry, no candidate match, "
@@ -199,6 +313,13 @@ def main() -> None:
 
     _print_report(by_rule, all_passes)
     _print_optional_report(results)
+
+    print(f"\n{DENOMINATOR_NOTE}")
+
+    if args.out:
+        _write_rows(
+            Path(args.out), results, stem=stem, args=args, blocked=blocked, failed=failed
+        )
 
 
 if __name__ == "__main__":

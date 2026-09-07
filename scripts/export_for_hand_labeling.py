@@ -21,7 +21,9 @@ import random
 import sys
 from pathlib import Path
 
+from credhunter_x.config.settings import Settings
 from credhunter_x.evaluation.remediation_reference import load_remediation_reference
+from credhunter_x.evaluation.result_files import result_stem
 
 RESULTS_DIR = Path("results")
 _DEFAULT_SAMPLE_SIZE = 45
@@ -43,10 +45,22 @@ def main() -> None:
     parser.add_argument("--split", choices=["dev", "test", "all"], default="all")
     parser.add_argument("--n", type=int, default=_DEFAULT_SAMPLE_SIZE)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--source", choices=["gitleaks", "trufflehog", "combined"], default="combined"
+    )
+    parser.add_argument("--model", default=None, help="defaults to LLM_MODEL from .env")
     parser.add_argument("--out", type=Path, default=Path("results/hand_labeling_sample.csv"))
     args = parser.parse_args()
 
-    stem = f"{args.arm}_{args.treatment}_{args.split}"
+    # result_stem, not a hand-built name: the files carry source and model too.
+    settings = Settings()
+    stem = result_stem(
+        arm=args.arm,
+        treatment=args.treatment,
+        split=args.split,
+        source=args.source,
+        model=args.model or settings.llm_model,
+    )
     jsonl_path = RESULTS_DIR / f"{stem}.jsonl"
     if not jsonl_path.exists():
         print(f"missing {jsonl_path} -- run run_evaluation.py for this arm/treatment/split first")
@@ -84,11 +98,17 @@ def main() -> None:
     args.out.parent.mkdir(exist_ok=True)
     with args.out.open("w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
-        writer.writerow(["candidate_id", "rule_id", "remediation", "element_text", "human_present"])
+        # arm/treatment travel with the rows so the kappa step reads the
+        # matching scored run and cannot compare against the wrong arm.
+        writer.writerow(
+            ["candidate_id", "rule_id", "arm", "treatment", "remediation",
+             "element_text", "human_present"]
+        )
         for row in sampled_rows:
             for element in reference[row["rule_id"]].required_elements:
                 writer.writerow(
-                    [row["candidate_id"], row["rule_id"], row["remediation"], element, ""]
+                    [row["candidate_id"], row["rule_id"], args.arm, args.treatment,
+                     row["remediation"], element, ""]
                 )
 
     n_element_rows = sum(len(reference[r["rule_id"]].required_elements) for r in sampled_rows)

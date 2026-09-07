@@ -284,6 +284,17 @@ rules:
           - "this looks like a hash / UUID / encoded value, not a secret"
         source: "OWASP 8.1 (entropy vs format); GitHub step 1 (Identify the secret)"
       - <<: *revoke_at_provider
+        # GATE. The checker answers this yes/no from the remediation text alone
+        # -- it never sees the underlying value, so the question asks what the
+        # remediation CLAIMS, not what the value actually is.
+        #   YES -> revoke_at_provider stays required.
+        #   NO  -> waived; the row passes on identify_value_type alone.
+        waived_unless: >
+          Does this remediation treat the flagged value as an actual
+          credential, rather than concluding it is something else (a hash,
+          UUID, checksum, encoded data, or test fixture)?
+        # Retained as documentation for a human reader. The loader ignores
+        # unknown keys; `waived_unless` above is what reaches the checker.
         conditional: >
           Required only where the remediation asserts the value IS a
           credential. If it concludes the value is not a credential, this

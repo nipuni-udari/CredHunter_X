@@ -1,11 +1,15 @@
 """Compares the student's hand-filled labels (from
-export_for_hand_labeling.py) against the automated element-checker's own
-output on the same candidates, reporting Cohen's kappa — the validation
-step that decides whether the automated checker is trustworthy at scale
-(the scope document's own rule of thumb: >= ~0.85 raw agreement). No
-labels are read from anywhere but the CSV the student filled in by hand.
-Costs real LLM quota (re-scores every sampled candidate). Not part of CI,
-run manually.
+export_for_hand_labeling.py) against the element-checker's own verdicts,
+reporting Cohen's kappa — the validation step that decides whether the
+automated checker is trustworthy at scale (the scope document's own rule
+of thumb: >= ~0.85 raw agreement). No labels are read from anywhere but
+the CSV the student filled in by hand. No LLM calls, run manually.
+
+Verdicts are READ from the scored run's --out file, never re-generated.
+Re-scoring would compare the hand labels against a fresh set of checker
+answers rather than the ones the dissertation reports, and the checker
+flips ~4.7% of verdicts between runs (rq3_checker_stability.json), so the
+kappa would not apply to the reported pass rates.
 
 Usage:
     uv run python scripts/compare_hand_labels_to_checker.py \\
@@ -16,22 +20,15 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import sys
 from collections import defaultdict
 from pathlib import Path
 
-from credhunter_x.config.settings import Settings
 from credhunter_x.evaluation.metrics import cohens_kappa
 from credhunter_x.evaluation.remediation_reference import load_remediation_reference
-from credhunter_x.evaluation.remediation_scoring import ElementCheckParsingError, score_remediation
-from credhunter_x.gitleaks.parser import parse_gitleaks_report
-from credhunter_x.gitleaks.runner import run_gitleaks
-from credhunter_x.guard.leak_guard import LeakGuard
-from credhunter_x.llm.guarded_client import GuardedLLMClient
-from credhunter_x.llm.litellm_client import LiteLLMClient
-from credhunter_x.masking.secret_registry import SecretRegistry
 
-CREDDATA_ROOT = Path("data/creddata_raw/CredData")
+RESULTS_DIR = Path("results")
 
 
 def _parse_bool(value: str) -> bool | None:
@@ -51,6 +48,12 @@ def main() -> None:
         description="Validate the automated checker against hand labels"
     )
     parser.add_argument("--labels", type=Path, default=Path("results/hand_labeling_sample.csv"))
+    parser.add_argument(
+        "--scores",
+        type=Path,
+        default=None,
+        help="scored run to validate against; defaults to the arm/treatment named in the CSV",
+    )
     args = parser.parse_args()
 
     if not args.labels.exists():
@@ -78,16 +81,21 @@ def main() -> None:
         )
         return
 
-    print("Re-running gitleaks to populate the leak guard's registry...", flush=True)
-    findings = run_gitleaks(CREDDATA_ROOT)
-    all_candidates = parse_gitleaks_report(findings, CREDDATA_ROOT)
+    scores_path = args.scores
+    if scores_path is None:
+        first = next(iter(rows_by_candidate.values()))[0]
+        arm, treatment = first.get("arm"), first.get("treatment")
+        if not arm or not treatment:
+            print("CSV has no arm/treatment columns -- pass --scores explicitly")
+            return
+        scores_path = RESULTS_DIR / f"rq3_scores_{arm}_{treatment}.json"
+    if not scores_path.exists():
+        print(f"missing {scores_path} -- score that run with --out first")
+        return
 
-    registry = SecretRegistry()
-    registry.register_candidates(all_candidates)
-    guard = LeakGuard(registry)
-    settings = Settings()
-    llm_client = LiteLLMClient(model=settings.llm_model, api_key=settings.llm_api_key)
-    client = GuardedLLMClient(llm_client, guard)
+    scored = json.loads(scores_path.read_text(encoding="utf-8"))
+    verdicts = {r["candidate_id"]: r for r in scored["rows"]}
+    print(f"validating against {scores_path} ({len(verdicts)} scored rows, no LLM calls)")
 
     reference = load_remediation_reference()
 
@@ -96,7 +104,6 @@ def main() -> None:
     skipped = 0
     for candidate_id, rows in rows_by_candidate.items():
         rule_id = rows[0]["rule_id"]
-        remediation = rows[0]["remediation"]
         required_elements = [row["element_text"] for row in rows]
         entry = reference.get(rule_id)
         if entry is None or entry.required_elements != required_elements:
@@ -104,27 +111,30 @@ def main() -> None:
             skipped += 1
             continue
 
-        try:
-            result = score_remediation(
-                client,
-                candidate_id=candidate_id,
-                rule_id=rule_id,
-                remediation=remediation,
-                required_elements=required_elements,
-            )
-        except ElementCheckParsingError as exc:
-            print(f"  skipping {candidate_id}: {exc}")
+        scored_row = verdicts.get(candidate_id)
+        if scored_row is None:
+            print(f"  skipping {candidate_id}: not in {scores_path.name}")
             skipped += 1
             continue
+        # Match on element text, not position -- a reordered reference would
+        # otherwise silently pair a human answer with the wrong verdict.
+        by_element = dict(
+            zip(scored_row["required_elements"], scored_row["element_present"], strict=True)
+        )
 
-        for row, checker_value in zip(rows, result.element_present, strict=True):
+        for row in rows:
+            checker_value = by_element.get(row["element_text"])
+            if checker_value is None:
+                print(f"  skipping one element of {candidate_id}: text not in the scored run")
+                skipped += 1
+                continue
             human_value = _parse_bool(row["human_present"])
             assert human_value is not None  # already validated above
             human_labels.append(human_value)
             checker_labels.append(checker_value)
 
     if skipped:
-        print(f"  {skipped} candidate(s) skipped", flush=True)
+        print(f"  {skipped} row(s)/candidate(s) skipped", flush=True)
     if len(human_labels) < 2:
         print("not enough comparable labels to compute kappa")
         return
