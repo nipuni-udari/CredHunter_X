@@ -125,14 +125,16 @@ def main() -> None:
         # arm/treatment travel with the rows so the kappa step reads the
         # matching scored run and cannot compare against the wrong arm.
         writer.writerow(
-            ["candidate_id", "rule_id", "arm", "treatment", "remediation",
+            ["candidate_id", "rule_id", "arm", "treatment", "element_no", "remediation",
              "element_text", "human_present"]
         )
         for row in sampled_rows:
-            for element in reference[row["rule_id"]].required_elements:
+            # element_no makes the two rows per remediation visibly different even
+            # when the long element_text column is scrolled off screen.
+            for i, element in enumerate(reference[row["rule_id"]].required_elements, 1):
                 writer.writerow(
                     [row["candidate_id"], row["rule_id"], row["_arm"], args.treatment,
-                     row["remediation"], element, ""]
+                     i, row["remediation"], element, ""]
                 )
 
     n_element_rows = sum(len(reference[r["rule_id"]].required_elements) for r in sampled_rows)
