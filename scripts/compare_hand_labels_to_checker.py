@@ -29,6 +29,7 @@ from credhunter_x.evaluation.metrics import cohens_kappa
 from credhunter_x.evaluation.remediation_reference import load_remediation_reference
 
 RESULTS_DIR = Path("results")
+_ANY_ARM = "*"  # --scores names one file directly; the CSV's arm column is then unused
 
 
 def _parse_bool(value: str) -> bool | None:
@@ -81,21 +82,32 @@ def main() -> None:
         )
         return
 
-    scores_path = args.scores
-    if scores_path is None:
-        first = next(iter(rows_by_candidate.values()))[0]
-        arm, treatment = first.get("arm"), first.get("treatment")
-        if not arm or not treatment:
+    # Every arm present in the CSV gets its own scored file. Reading the arm
+    # from the first row only would silently compare one arm's labels against
+    # the other arm's verdicts on a mixed sample.
+    # Keyed by (arm, candidate_id), never candidate_id alone: 211 candidates
+    # appear in BOTH scored files, so a flat merge would hand one arm's rows
+    # the other arm's verdicts.
+    verdicts: dict[tuple[str, str], dict] = {}
+    if args.scores is not None:
+        paths = {_ANY_ARM: args.scores}
+    else:
+        pairs = {(r.get("arm"), r.get("treatment")) for rows in rows_by_candidate.values()
+                 for r in rows}
+        if any(not a or not t for a, t in pairs):
             print("CSV has no arm/treatment columns -- pass --scores explicitly")
             return
-        scores_path = RESULTS_DIR / f"rq3_scores_{arm}_{treatment}.json"
-    if not scores_path.exists():
-        print(f"missing {scores_path} -- score that run with --out first")
-        return
+        paths = {a: RESULTS_DIR / f"rq3_scores_{a}_{t}.json" for a, t in sorted(pairs)}
 
-    scored = json.loads(scores_path.read_text(encoding="utf-8"))
-    verdicts = {r["candidate_id"]: r for r in scored["rows"]}
-    print(f"validating against {scores_path} ({len(verdicts)} scored rows, no LLM calls)")
+    for arm, path in paths.items():
+        if not path.exists():
+            print(f"missing {path} -- score that run with --out first")
+            return
+        rows_scored = json.loads(path.read_text(encoding="utf-8"))["rows"]
+        for r in rows_scored:
+            verdicts[(arm, r["candidate_id"])] = r
+        print(f"  {arm}: {len(rows_scored)} scored rows from {path.name}")
+    print(f"validating against {len(paths)} scored run(s), no LLM calls")
 
     reference = load_remediation_reference()
 
@@ -111,9 +123,10 @@ def main() -> None:
             skipped += 1
             continue
 
-        scored_row = verdicts.get(candidate_id)
+        arm = _ANY_ARM if args.scores is not None else str(rows[0].get("arm"))
+        scored_row = verdicts.get((arm, candidate_id))
         if scored_row is None:
-            print(f"  skipping {candidate_id}: not in {scores_path.name}")
+            print(f"  skipping {candidate_id}: no {arm} verdict for it")
             skipped += 1
             continue
         # Match on element text, not position -- a reordered reference would
