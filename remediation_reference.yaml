@@ -3,8 +3,7 @@
 # Version 2 -- rebuilt from verified primary sources
 # ============================================================================
 #
-# RQ3: Are the generated explanations and remediations technically correct
-#      and useful?
+# RQ3: Are the generated remediations technically correct and useful?
 # H3:  >=80% of remediations contain every pre-registered required element,
 #      tested against the LOWER BOUND of the Wilson 95% interval.
 #
@@ -20,8 +19,12 @@
 
 _meta:
   version: 2
-  pre_registered_on: "TODO-YYYY-MM-DD"
-  frozen_at_commit: "TODO"
+  # Last change to any rule content (the high-entropy waived_unless gate).
+  # All RQ3 scoring ran after this date.
+  pre_registered_on: "2026-09-06"
+  # The commit holding that content. Later commits touch only _meta, never
+  # an element description -- a file cannot carry its own commit's hash.
+  frozen_at_commit: "ba8e06b"
   corpus: "CredData, Python-filtered, --source combined, 517 candidates"
 
   # --------------------------------------------------------------------------
@@ -93,7 +96,7 @@ _sources:
       links to commits; (4) Logging -- incident responders need lifecycle
       information (who had access, when used, when last rotated).
     verified: true
-    retrieved: "TODO-YYYY-MM-DD"
+    retrieved: "2026-09-06"
 
   github_remediate:
     title: "GitHub Docs -- Remediating a leaked secret in your repository"
@@ -109,7 +112,7 @@ _sources:
       most important step. Notes that cleaning git history is destructive and
       disruptive because it may involve force pushing.
     verified: true
-    retrieved: "TODO-YYYY-MM-DD"
+    retrieved: "2026-09-07"
 
   rfc3986:
     title: "RFC 3986, Uniform Resource Identifier (URI): Generic Syntax"
@@ -124,7 +127,7 @@ _sources:
       deprecated and should be treated as an error. Corroborated by RFC 9110,
       which repeats the deprecation.
     verified: true
-    retrieved: "TODO-YYYY-MM-DD"
+    retrieved: "2026-09-07"
 
   cwe798:
     title: "CWE-798: Use of Hard-coded Credentials"
@@ -369,7 +372,7 @@ rules:
           - "generate a new key pair"
           - "treat the private key as compromised"
           - "reissue the key"
-        source: "OWASP Key Management Cheat Sheet; NIST SP 800-57 Pt1 Rev5 (compromised key state) -- VERIFY"
+        source: "OWASP Key Management Cheat Sheet; NIST SP 800-57 Pt1 Rev5 (compromised key state)"
       - id: revoke_trust
         description: >
           States the old public key must be removed wherever it was trusted
@@ -396,7 +399,7 @@ rules:
           - "generate a new key pair"
           - "treat the private key as compromised"
           - "reissue the key"
-        source: "OWASP Key Management Cheat Sheet; NIST SP 800-57 Pt1 Rev5 -- VERIFY"
+        source: "OWASP Key Management Cheat Sheet; NIST SP 800-57 Pt1 Rev5"
       - id: revoke_trust
         description: >
           States the old public key must be removed wherever it was trusted
@@ -485,7 +488,7 @@ rules:
           - "rotate the signing key"
           - "revoke the session / add to a denylist"
           - "the token remains valid until it expires"
-        source: "OWASP 2.12 (token security, short-lived tokens); RFC 8725 -- VERIFY"
+        source: "OWASP 2.12 (token security, short-lived tokens); RFC 8725"
       - *remove_from_source
     optional_elements:
       - id: inspect_claims
