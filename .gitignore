@@ -20,6 +20,8 @@ htmlcov/
 data/creddata_raw/
 data/processed/
 results/
+# dissertation working document, not part of the published artefact
+Research_Scope_and_Plan.md
 scratchpad_tmp/
 # frozen candidate sets (--candidates-cache) hold real secret values
 *.candidates.json
