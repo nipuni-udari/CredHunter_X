@@ -149,7 +149,13 @@ def test_scan_repository_classifies_both_fixture_secrets(monkeypatch: pytest.Mon
 
     outcome = scan_repository(SAMPLE_REPO, settings=settings, scan_config=scan_config)
 
-    assert {r.candidate.rule_id for r in outcome.results} == {"github-pat", "slack-bot-token"}
+    assert {r.candidate.rule_id for r in outcome.results} == {
+        "github-pat",
+        "slack-bot-token",
+        # trufflehog-only: the password inside db.py's connection string,
+        # which gitleaks does not report.
+        "generic.password-in-url",
+    }
     assert all(r.classification.label == Label.TRUE_SECRET for r in outcome.results)
     assert outcome.skipped_count == 0
 
@@ -202,7 +208,13 @@ def test_scan_repository_agentic_mode_classifies_without_calling_a_tool(
 
     outcome = scan_repository(SAMPLE_REPO, settings=settings, scan_config=scan_config)
 
-    assert {r.candidate.rule_id for r in outcome.results} == {"github-pat", "slack-bot-token"}
+    assert {r.candidate.rule_id for r in outcome.results} == {
+        "github-pat",
+        "slack-bot-token",
+        # trufflehog-only: the password inside db.py's connection string,
+        # which gitleaks does not report.
+        "generic.password-in-url",
+    }
     assert all(r.classification.label == Label.TRUE_SECRET for r in outcome.results)
     assert all(r.classification.arm == "agentic" for r in outcome.results)
     assert outcome.skipped_count == 0
@@ -217,7 +229,13 @@ def test_scan_repository_pseudonymised_treatment_classifies_and_never_sends_raw_
 
     outcome = scan_repository(SAMPLE_REPO, settings=settings, scan_config=scan_config)
 
-    assert {r.candidate.rule_id for r in outcome.results} == {"github-pat", "slack-bot-token"}
+    assert {r.candidate.rule_id for r in outcome.results} == {
+        "github-pat",
+        "slack-bot-token",
+        # trufflehog-only: the password inside db.py's connection string,
+        # which gitleaks does not report.
+        "generic.password-in-url",
+    }
     assert all(r.classification.label == Label.TRUE_SECRET for r in outcome.results)
     assert outcome.skipped_count == 0
     for sent in fake.received_prompts:
@@ -234,7 +252,13 @@ def test_scan_repository_metadata_only_never_sends_a_real_or_length_matched_valu
 
     outcome = scan_repository(SAMPLE_REPO, settings=settings, scan_config=scan_config)
 
-    assert {r.candidate.rule_id for r in outcome.results} == {"github-pat", "slack-bot-token"}
+    assert {r.candidate.rule_id for r in outcome.results} == {
+        "github-pat",
+        "slack-bot-token",
+        # trufflehog-only: the password inside db.py's connection string,
+        # which gitleaks does not report.
+        "generic.password-in-url",
+    }
     assert all(r.classification.label == Label.TRUE_SECRET for r in outcome.results)
     assert outcome.skipped_count == 0
     for sent in fake.received_prompts:
@@ -260,8 +284,8 @@ def test_scan_repository_survives_one_candidate_whose_call_times_out(
     outcome = scan_repository(SAMPLE_REPO, settings=settings, scan_config=scan_config)
 
     assert outcome.skipped_count == 1
-    assert len(outcome.results) == 1
-    assert outcome.results[0].classification.label == Label.TRUE_SECRET
+    assert len(outcome.results) == 2
+    assert all(r.classification.label == Label.TRUE_SECRET for r in outcome.results)
 
 
 def test_scan_repository_survives_one_candidate_with_an_empty_model_response(
@@ -281,8 +305,8 @@ def test_scan_repository_survives_one_candidate_with_an_empty_model_response(
     outcome = scan_repository(SAMPLE_REPO, settings=settings, scan_config=scan_config)
 
     assert outcome.skipped_count == 1
-    assert len(outcome.results) == 1
-    assert outcome.results[0].classification.label == Label.TRUE_SECRET
+    assert len(outcome.results) == 2
+    assert all(r.classification.label == Label.TRUE_SECRET for r in outcome.results)
 
 
 def test_scan_repository_recovers_a_candidate_whose_response_was_empty_once(
@@ -290,7 +314,7 @@ def test_scan_repository_recovers_a_candidate_whose_response_was_empty_once(
 ):
     """A one-off empty completion used to drop the candidate permanently:
     it is a successful response, so the error-retry path never saw it, and
-    it died at the parse instead. Both candidates must now survive."""
+    it died at the parse instead. Every candidate must now survive."""
     fake = _FakeCompletionEmptyOnFirstCall()
     monkeypatch.setattr(litellm_client_module.litellm, "completion", fake)
     monkeypatch.setattr(litellm_client_module.time, "sleep", lambda *a, **k: None)
@@ -300,7 +324,7 @@ def test_scan_repository_recovers_a_candidate_whose_response_was_empty_once(
     outcome = scan_repository(SAMPLE_REPO, settings=settings, scan_config=scan_config)
 
     assert outcome.skipped_count == 0
-    assert len(outcome.results) == 2
+    assert len(outcome.results) == 3
 
 
 def _make_candidate(

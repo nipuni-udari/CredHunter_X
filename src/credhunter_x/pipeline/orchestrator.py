@@ -26,6 +26,9 @@ from credhunter_x.masking.secret_registry import SecretRegistry
 from credhunter_x.models.candidate import Candidate
 from credhunter_x.models.classification import ClassificationResult
 from credhunter_x.models.treatment import SanitisedContext, Treatment
+from credhunter_x.pipeline.candidate_merge import merge_candidates
+from credhunter_x.trufflehog.parser import parse_trufflehog_report
+from credhunter_x.trufflehog.runner import run_trufflehog
 
 logger = logging.getLogger(__name__)
 
@@ -54,17 +57,29 @@ def scan_repository(
     repo_id: str = "",
     skip_candidate_on_error: bool = True,
 ) -> ScanOutcome:
-    """Single wiring point: gitleaks -> masking -> classifier. This is what
+    """Single wiring point: detectors -> masking -> classifier. This is what
     the CLI calls; run_evaluation.py calls classify_candidates() directly
-    to reuse one gitleaks pass across treatments. LiteLLMClient/
+    to reuse one detector pass across treatments. LiteLLMClient/
     GuardedLLMClient are always constructed together here -- no caller can
     get an unguarded client.
+
+    Both detectors run and merge, matching the evaluated pipeline: gitleaks
+    alone misses the high-entropy family, which trufflehog supplies.
 
     skip_candidate_on_error defaults True here (unlike classify_candidates'
     False) since this is the unattended CI path -- one bad model response
     shouldn't crash the whole scan. Pass False for a hard failure instead."""
-    findings = run_gitleaks(source, gitleaks_binary=settings.gitleaks_binary_path)
-    candidates = parse_gitleaks_report(findings, source, repo_id=repo_id)
+    gitleaks_candidates = parse_gitleaks_report(
+        run_gitleaks(source, gitleaks_binary=settings.gitleaks_binary_path),
+        source,
+        repo_id=repo_id,
+    )
+    trufflehog_candidates = parse_trufflehog_report(
+        run_trufflehog(source, trufflehog_binary=settings.trufflehog_binary_path),
+        source,
+        repo_id=repo_id,
+    )
+    candidates = merge_candidates(gitleaks_candidates, trufflehog_candidates)
     results = classify_candidates(
         candidates,
         settings=settings,
