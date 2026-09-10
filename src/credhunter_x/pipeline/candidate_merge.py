@@ -22,20 +22,32 @@ def merge_candidates(primary: list[Candidate], secondary: list[Candidate]) -> li
     the other's -- trufflehog often reports just the high-entropy fragment
     it matched, not the whole token gitleaks reports. `primary`'s version
     is kept on a match (its value-offset resolution is the tested one),
-    with `source` updated to record that both detectors found it."""
+    with `source` updated to record that both detectors found it.
+
+    A candidate absorbs *every* other detection of the same secret, not just
+    the first. One value routinely trips several rules at once -- gitleaks'
+    `private-key` and trufflehog's `private.key` on one PEM header, or
+    `generic-api-key` + `generic.secret` + `high-entropy` on one assignment --
+    and pairing them off one-to-one left the surplus behind as its own
+    candidate, costing an LLM call per surplus row and raising one alert per
+    rule instead of one per secret. Repeats inside a single detector's own
+    output are dropped for the same reason."""
     merged: list[Candidate] = []
     secondary_matched = [False] * len(secondary)
 
     for p in primary:
-        match_idx = next(
-            (i for i, s in enumerate(secondary) if not secondary_matched[i] and _same_secret(p, s)),
-            None,
-        )
-        if match_idx is None:
-            merged.append(p)
+        if any(_same_secret(p, kept) for kept in merged):
             continue
-        secondary_matched[match_idx] = True
-        merged.append(replace(p, source=f"{p.source}+{secondary[match_idx].source}"))
+        matched = [
+            i for i, s in enumerate(secondary) if not secondary_matched[i] and _same_secret(p, s)
+        ]
+        for i in matched:
+            secondary_matched[i] = True
+        sources = sorted({secondary[i].source for i in matched})
+        merged.append(replace(p, source="+".join([p.source, *sources])) if matched else p)
 
-    merged.extend(s for i, s in enumerate(secondary) if not secondary_matched[i])
+    for i, s in enumerate(secondary):
+        if secondary_matched[i] or any(_same_secret(s, kept) for kept in merged):
+            continue
+        merged.append(s)
     return merged
