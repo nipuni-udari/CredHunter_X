@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from html import escape
 from pathlib import Path
 
@@ -26,26 +27,17 @@ _LABEL_ANCHORS: dict[Label, str] = {
     Label.FALSE_POSITIVE: "dismissed",
 }
 
-# Drawn rather than embedded: an inline SVG stays sharp at any size, survives
-# being opened offline, and keeps the report a single file with no binary.
-_LOGO = """
-<svg class="logo" viewBox="0 0 132 120" role="img" aria-label="CredHunter-X">
-  <defs>
-    <linearGradient id="chx" x1="0" y1="1" x2="1" y2="0">
-      <stop offset="0" stop-color="#2e1065"/><stop offset="1" stop-color="#7c3aed"/>
-    </linearGradient>
-  </defs>
-  <g fill="url(#chx)">
-    <path d="M46 16h44L72 34H54L38 50v20l16 16h18l18 18H46L20 78V42z"/>
-    <rect x="46" y="44" width="15" height="32"/>
-    <rect x="46" y="52" width="34" height="15"/>
-    <path d="M76 30h20l30 72h-20z"/><path d="M106 30h20L96 102H76z"/>
-    <rect x="108" y="14" width="9" height="9"/>
-    <rect x="120" y="4" width="7" height="7"/>
-    <rect x="99" y="4" width="6" height="6"/>
-  </g>
-</svg>
-"""
+_ICON_PATH = Path(__file__).parent / "assets" / "icon.png"
+
+
+def _logo() -> str:
+    """Inlined as a data URI so the report stays one file that works offline.
+    A missing icon degrades to no logo rather than a broken image."""
+    if not _ICON_PATH.is_file():
+        return ""
+    data = base64.b64encode(_ICON_PATH.read_bytes()).decode("ascii")
+    return f'<img class="logo" src="data:image/png;base64,{data}" alt="">'
+
 
 _STYLE = """
 :root {
@@ -63,7 +55,7 @@ body { font-family:system-ui,-apple-system,"Segoe UI",sans-serif; background:var
        color:var(--ink); max-width:1000px; margin:0 auto; padding:2.5rem 1.25rem 4rem;
        line-height:1.55; }
 header { display:flex; align-items:center; gap:.9rem; margin-bottom:1.75rem; }
-.logo { width:52px; height:47px; flex:none; }
+.logo { width:56px; height:auto; flex:none; }
 h1 { font-size:1.4rem; margin:0; letter-spacing:-.01em; }
 h1 small { display:block; font-size:.8rem; font-weight:400; color:var(--muted);
            letter-spacing:0; margin-top:.15rem; }
@@ -126,7 +118,7 @@ def build_html_report(results: list[ScanResult]) -> str:
 <style>{_STYLE}</style>
 </head>
 <body>
-<header>{_LOGO}<h1>CredHunter-X<small>scan report</small></h1></header>
+<header>{_logo()}<h1>CredHunter-X<small>scan report</small></h1></header>
 <div class="tiles">
   {_build_tile(Label.TRUE_SECRET, counts, "secrets found")}
   {_build_tile(Label.UNCERTAIN, counts, "need review")}
