@@ -142,9 +142,19 @@ runs:
     - name: Enforce scan result
       if: always()
       shell: bash
+      # Exit 1 is a verdict about the scanned code; anything higher means the
+      # scanner itself failed, which must never be reported as a finding.
       run: |
         code="${{ steps.scan.outputs.exit-code }}"
-        if [ "${{ inputs.fail-on-secret }}" = "true" ] && [ "${code:-1}" != "0" ]; then
-          echo "::error::CredHunter-X found a secret, or a candidate could not be classified."
-          exit 1
-        fi
+        case "${code:-1}" in
+          0)
+            ;;
+          1)
+            echo "::error::CredHunter-X found a secret, or a candidate could not be classified."
+            if [ "${{ inputs.fail-on-secret }}" = "true" ]; then exit 1; fi
+            ;;
+          *)
+            echo "::error::CredHunter-X failed to run (exit ${code}) -- a tool or configuration error, not a finding in your code."
+            exit 1
+            ;;
+        esac
