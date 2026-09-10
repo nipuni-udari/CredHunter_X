@@ -1,0 +1,30 @@
+title = "CredHunter-X self-scan"
+
+# Config for scanning THIS repository in CI. It does not travel with the
+# shipped tool, and gitleaks only reads it when the directory being scanned
+# is the one holding it -- the pipeline's own scans are unaffected.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Planted fixtures and build output, not real credentials"
+paths = [
+  # A secret scanner cannot have a test suite without fake secrets in it.
+  '''(^|/)tests/''',
+  '''(^|/)\.venv/''',
+  '''(^|/)__pycache__/''',
+  '''(^|/)\.pytest_cache/''',
+  '''(^|/)dist/''',
+  '''(^|/)htmlcov/''',
+  # Research corpora: CredData's own planted credentials, and output derived
+  # from them. Both are gitignored and never reach CI.
+  '''(^|/)data/''',
+  '''(^|/)results/''',
+]
+# The two key-shaped strings in the README's worked example. The first is
+# AWS's own documentation placeholder; the second was invented for it.
+regexes = [
+  '''AKIAIOSFODNN7EXAMPLE''',
+  '''AKIAZ3XK7QW2NBVCXR4T''',
+]

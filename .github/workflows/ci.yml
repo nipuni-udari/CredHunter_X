@@ -46,5 +46,7 @@ jobs:
       - name: Test
         run: uv run pytest -m "not live" --cov=credhunter_x
 
+      # --redact so a real value could never be printed into a public build
+      # log. .gitleaks.toml allowlists the planted test fixtures.
       - name: Scan repo for secrets
-        run: gitleaks detect --source . --no-git -v
+        run: gitleaks detect --source . --no-git --redact -v
