@@ -88,9 +88,13 @@ runs:
         curl -sSfL "$url" | tar -xz gitleaks
         sudo mv gitleaks /usr/local/bin/gitleaks
         python -m pip install --quiet --upgrade pip
-        python -m pip install --quiet "trufflehog3==${{ inputs.trufflehog-version }}"
+        # Its own venv: trufflehog3 pins attrs and jinja2 to versions litellm
+        # cannot live with, and only its binary needs to be reachable.
+        python -m venv "$RUNNER_TEMP/th"
+        "$RUNNER_TEMP/th/bin/pip" install --quiet "trufflehog3==${{ inputs.trufflehog-version }}"
+        echo "$RUNNER_TEMP/th/bin" >> "$GITHUB_PATH"
         gitleaks version
-        trufflehog3 --version
+        "$RUNNER_TEMP/th/bin/trufflehog3" --version
 
     - name: Install CredHunter-X
       shell: bash
