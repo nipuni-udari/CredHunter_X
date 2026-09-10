@@ -18,9 +18,13 @@ inputs:
     description: 'API key for the model provider. Pass a repository secret, never a literal.'
     required: true
   mode:
-    description: 'Classifier arm, "single" or "agentic". Leave empty to use the scanned repo''s own .secretscan.yml.'
+    description: 'Classifier arm, "agentic" (default, more thorough) or "single" (one call per candidate, cheaper). Leave empty to use the scanned repo''s own .secretscan.yml.'
     required: false
-    default: 'single'
+    default: 'agentic'
+  llm-reasoning-effort:
+    description: 'Reasoning effort for reasoning-capable models. Empty leaves the model''s own default in place.'
+    required: false
+    default: 'medium'
   sarif-file:
     description: 'Where to write the SARIF report.'
     required: false
@@ -104,13 +108,14 @@ runs:
       env:
         LLM_MODEL: ${{ inputs.llm-model }}
         LLM_API_KEY: ${{ inputs.llm-api-key }}
+        LLM_REASONING_EFFORT: ${{ inputs.llm-reasoning-effort }}
         GITLEAKS_BINARY_PATH: gitleaks
         TRUFFLEHOG_BINARY_PATH: trufflehog3
       # Never fails here -- the exit code is enforced at the end, so the SARIF
       # still gets published when a secret is found.
       run: |
         set +e
-        args=(scan "${{ inputs.path }}" --sarif "${{ inputs.sarif-file }}")
+        args=("${{ inputs.path }}" --sarif "${{ inputs.sarif-file }}")
         if [ -n "${{ inputs.html-file }}" ]; then
           args+=(--html "${{ inputs.html-file }}")
         fi
