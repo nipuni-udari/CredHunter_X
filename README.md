@@ -157,9 +157,19 @@ provider. Any litellm `provider/model` string works.
 | `mode` | `agentic` | `agentic` reads nearby files before deciding; `single` is one call per finding and cheaper |
 | `llm-reasoning-effort` | `medium` | for reasoning-capable models |
 | `path` | `.` | directory to scan |
-| `fail-on-secret` | `true` | `false` reports without blocking the merge |
-| `gitleaks-version` | `8.18.4` | pinned, so results do not drift |
-| `trufflehog-version` | `3.0.10` | pinned, so results do not drift |
+| `fail-on-secret` | `'true'` | `'false'` reports without blocking the merge |
+| `job-summary` | `'true'` | render the findings on the run page |
+| `upload-sarif` | `'true'` | publish to the Security tab; needs `security-events: write` |
+| `upload-html` | `'true'` | attach the HTML report as a workflow artifact |
+| `sarif-file` | `credhunter-x.sarif` | where the SARIF is written |
+| `html-file` | `credhunter-x.html` | where the HTML report is written; empty disables it |
+| `python-version` | `'3.12'` | Python used to run the scanner |
+| `gitleaks-version` | `'8.18.4'` | pinned, so results do not drift |
+| `trufflehog-version` | `'3.0.10'` | pinned, so results do not drift |
+
+Quote values like `'true'` and `'8.18.4'`. Action inputs are strings, and
+unquoted YAML turns them into a boolean and a number that then fail to compare
+inside the action.
 
 Both detector versions are pinned on purpose. An unpinned detector silently
 changes what reaches the classifier, and you would see results move with no
@@ -168,6 +178,23 @@ change on your side.
 **The repository must be public** for SARIF to reach the Security tab — code
 scanning is free on public repositories, and needs GitHub Advanced Security on
 private ones.
+
+### What you get back
+
+**On the run page**, a summary panel: how many secrets, how many dismissed, a
+table sorted by severity, expandable reasoning per finding, and links to both
+the Security tab and the HTML report. Nothing to download to read the result.
+
+**In the Security tab**, one alert per real finding, on its own file and line.
+Dismissed false positives are deliberately left out.
+
+**As a workflow artifact**, `credhunter-x-report` — the full HTML report,
+including the dismissed findings and the remediation for each one, with
+severity and rule filters.
+
+**As an exit code**, `1` when a secret is found or a candidate could not be
+classified, and `2` or higher when the scanner itself failed. The two are
+reported differently, so a broken run never looks like a finding in your code.
 
 ---
 
@@ -193,7 +220,17 @@ uv run credhunter-x path/to/repo --sarif report.sarif --html report.html
 `true_secret` and `uncertain` findings go in it, so it genuinely reduces the
 list rather than relabelling every hit. `report.html` is a self-contained page
 for a person, and it *does* list the dismissed false positives, so you can
-check what was thrown away and why.
+check what was thrown away and why; it filters by severity and rule, so a long
+list stays workable.
+
+There is a third format, `--markdown`, which appends a short summary — counts,
+a findings table, the reasoning, but no remediation — to a file instead of
+overwriting it. That is what the GitHub Action points at
+`$GITHUB_STEP_SUMMARY`, and it works the same way locally:
+
+```powershell
+uv run credhunter-x path/to/repo --markdown summary.md
+```
 
 **Exit code 0** means clean. **Exit code 1** means either a real secret was
 found, or something could not be classified.
@@ -332,4 +369,7 @@ uv run ruff check . && uv run ruff format --check . && uv run mypy src
 
 ## License
 
-TBD — a license must be chosen before this repository is made public.
+MIT — see [LICENSE](LICENSE).
+
+GitLeaks and TruffleHog are run as separate processes, never linked or
+imported, so their own licenses do not apply to this code.

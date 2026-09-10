@@ -3,6 +3,8 @@ name = "credhunter-x"
 version = "0.1.0"
 description = "LLM-assisted secret detection and explanation for Python source code, with a privacy-preserving masking layer."
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
 dependencies = [
     "pydantic>=2.0",
