@@ -46,7 +46,8 @@ def filter_to_python(meta: pd.DataFrame) -> pd.DataFrame:
     dropped = int((~exists_mask).sum())
     if dropped:
         print(
-            f"Dropping {dropped} meta rows whose referenced file is missing on disk (stale entries)."
+            f"Dropping {dropped} meta rows whose referenced file is missing "
+            "on disk (stale entries)."
         )
     return python_rows[exists_mask]
 

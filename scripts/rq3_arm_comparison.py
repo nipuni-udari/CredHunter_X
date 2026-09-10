@@ -68,11 +68,11 @@ def main() -> None:
     print(f"  passed under agentic only: {len(only_a)}")
     print(f"  McNemar chi2 = {stat:.3f}   p = {p:.4f}")
     print()
-    print(f"  discordant {disc}/{len(shared)} = {disc / len(shared):.3f}  "
-          f"vs the checker's own flip rate {FLIP:.3f}")
-    verdict = (
-        "DIFFERENCE (p < 0.05)" if p < 0.05 else "NO DIFFERENCE ESTABLISHED (p >= 0.05)"
+    print(
+        f"  discordant {disc}/{len(shared)} = {disc / len(shared):.3f}  "
+        f"vs the checker's own flip rate {FLIP:.3f}"
     )
+    verdict = "DIFFERENCE (p < 0.05)" if p < 0.05 else "NO DIFFERENCE ESTABLISHED (p >= 0.05)"
     print(f"  -> {verdict}")
 
     print()

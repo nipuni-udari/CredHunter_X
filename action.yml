@@ -41,6 +41,10 @@ inputs:
     description: 'Upload the HTML report as a workflow artifact.'
     required: false
     default: 'true'
+  job-summary:
+    description: 'Render the findings on the run page, so they can be read without downloading anything.'
+    required: false
+    default: 'true'
   fail-on-secret:
     description: 'Fail the job on a true secret, or on any candidate that could not be classified.'
     required: false
@@ -119,6 +123,9 @@ runs:
         if [ -n "${{ inputs.html-file }}" ]; then
           args+=(--html "${{ inputs.html-file }}")
         fi
+        if [ "${{ inputs.job-summary }}" = "true" ]; then
+          args+=(--markdown "$GITHUB_STEP_SUMMARY")
+        fi
         credhunter-x "${args[@]}"
         code=$?
         set -e
@@ -132,12 +139,23 @@ runs:
         category: credhunter-x
 
     - name: Upload HTML report
+      id: html
       if: always() && inputs.upload-html == 'true' && inputs.html-file != '' && hashFiles(inputs.html-file) != ''
       uses: actions/upload-artifact@v4
       with:
         name: credhunter-x-report
         path: ${{ inputs.html-file }}
         if-no-files-found: ignore
+
+    - name: Link the report from the summary
+      # Runs after the upload because the artifact URL does not exist until then.
+      if: always() && inputs.job-summary == 'true' && steps.html.outputs.artifact-url != ''
+      shell: bash
+      run: |
+        {
+          echo ""
+          echo "📄 Remediation for each finding is in the HTML report — [download credhunter-x-report](${{ steps.html.outputs.artifact-url }})."
+        } >> "$GITHUB_STEP_SUMMARY"
 
     - name: Enforce scan result
       if: always()

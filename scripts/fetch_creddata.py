@@ -53,7 +53,8 @@ def _require_native_linux_filesystem() -> None:
             "download_data.py must run on a native Linux filesystem (WSL is fine).\n"
             "Run this script from inside WSL, e.g.:\n"
             "  wsl\n"
-            "  cd ~ && python3 /mnt/c/Users/krnan/Desktop/Research/credhunter-x/scripts/fetch_creddata.py"
+            "  cd ~ && python3 /mnt/c/Users/krnan/Desktop/Research/credhunter-x"
+            "/scripts/fetch_creddata.py"
         )
     if str(WORK_DIR).startswith("/mnt/"):
         sys.exit(
@@ -105,7 +106,8 @@ def filter_snapshot_to_python_repos(python_repo_ids: set[str]) -> None:
     filtered = {k: v for k, v in full_snapshot.items() if short_id(k) in python_repo_ids}
     snapshot_path.write_text(json.dumps(filtered))
     print(
-        f"snapshot.json: {len(full_snapshot)} repos -> {len(filtered)} repos (Python-referenced only)"
+        f"snapshot.json: {len(full_snapshot)} repos -> {len(filtered)} repos "
+        "(Python-referenced only)"
     )
 
 
@@ -172,7 +174,8 @@ def main() -> None:
     copy_output_to_project()
     print(f"\nDone. Windows-safe data/ and meta/ now at {PROJECT_RAW_DIR}")
     print(
-        f"({WORK_DIR} and {VENV_DIR}, including WORK_DIR's tmp/ dir, can be deleted once you've confirmed the copy.)"
+        f"({WORK_DIR} and {VENV_DIR}, including WORK_DIR's tmp/ dir, can be "
+        "deleted once you've confirmed the copy.)"
     )
 
 

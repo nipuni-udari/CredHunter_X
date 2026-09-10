@@ -9,6 +9,7 @@ from credhunter_x.config.settings import Settings, load_scan_config
 from credhunter_x.models.classification import Label
 from credhunter_x.pipeline.orchestrator import scan_repository
 from credhunter_x.reporting.html_report import write_html_report
+from credhunter_x.reporting.markdown_summary import write_markdown_summary
 from credhunter_x.reporting.sarif import write_sarif_report
 
 # Force UTF-8 stdout so model output doesn't crash on Windows' cp1252 console.
@@ -27,6 +28,11 @@ def scan(
     html: Path | None = typer.Option(  # noqa: B008
         None, help="Write a developer-friendly HTML report."
     ),
+    markdown: Path | None = typer.Option(  # noqa: B008
+        None,
+        help="Append a markdown summary (e.g. $GITHUB_STEP_SUMMARY). "
+        "Findings and reasoning only -- remediation stays in the HTML report.",
+    ),
 ) -> None:
     """Scans PATH and prints one line per candidate. Exits non-zero if any
     candidate is true_secret, or if any candidate couldn't be classified
@@ -40,6 +46,8 @@ def scan(
         write_sarif_report(results, sarif)
     if html is not None:
         write_html_report(results, html)
+    if markdown is not None:
+        write_markdown_summary(results, markdown, skipped_count=outcome.skipped_count)
 
     if not results and outcome.skipped_count == 0:
         typer.echo("No candidates found.")

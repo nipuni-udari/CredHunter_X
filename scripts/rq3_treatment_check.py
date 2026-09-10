@@ -90,14 +90,18 @@ def main() -> None:
         for cid in set(base) & set(comp)
         if reference.get(base[cid]["rule_id"]) is not None and cid in by_id
     )
-    print(f"{args.arm}: {len(base)} true_secret under {args.baseline}, "
-          f"{len(comp)} under {args.compare}, {len(shared)} scoreable in both", flush=True)
+    print(
+        f"{args.arm}: {len(base)} true_secret under {args.baseline}, "
+        f"{len(comp)} under {args.compare}, {len(shared)} scoreable in both",
+        flush=True,
+    )
 
     rng = random.Random(args.seed)
     sample = rng.sample(shared, min(args.n, len(shared)))
     print(f"sampling {len(sample)} paired candidates = {len(sample) * 2} checker calls", flush=True)
-    print(f"  rule mix: {dict(Counter(base[c]['rule_id'] for c in sample).most_common())}",
-          flush=True)
+    print(
+        f"  rule mix: {dict(Counter(base[c]['rule_id'] for c in sample).most_common())}", flush=True
+    )
 
     registry = SecretRegistry()
     registry.register_candidates(candidates)
@@ -145,10 +149,16 @@ def main() -> None:
     paired = [c for c, v in verdicts.items() if args.baseline in v and args.compare in v]
     b_pass = sum(1 for c in paired if verdicts[c][args.baseline]["passed"])
     c_pass = sum(1 for c in paired if verdicts[c][args.compare]["passed"])
-    only_b = [c for c in paired
-              if verdicts[c][args.baseline]["passed"] and not verdicts[c][args.compare]["passed"]]
-    only_c = [c for c in paired
-              if verdicts[c][args.compare]["passed"] and not verdicts[c][args.baseline]["passed"]]
+    only_b = [
+        c
+        for c in paired
+        if verdicts[c][args.baseline]["passed"] and not verdicts[c][args.compare]["passed"]
+    ]
+    only_c = [
+        c
+        for c in paired
+        if verdicts[c][args.compare]["passed"] and not verdicts[c][args.baseline]["passed"]
+    ]
 
     b_lo, b_hi = wilson_score_interval(b_pass, len(paired))
     c_lo, c_hi = wilson_score_interval(c_pass, len(paired))
@@ -158,16 +168,24 @@ def main() -> None:
     print(f"paired candidates        : {len(paired)}   parse errors: {errors}")
     if blocked:
         print(f"guard-blocked (excluded) : {len(blocked)}  {blocked}")
-    print(f"{args.baseline:<8} pass rate       : {b_pass}/{len(paired)} = "
-          f"{b_pass / len(paired):.3f}   95% CI [{b_lo:.3f}, {b_hi:.3f}]")
-    print(f"{args.compare:<8} pass rate       : {c_pass}/{len(paired)} = "
-          f"{c_pass / len(paired):.3f}   95% CI [{c_lo:.3f}, {c_hi:.3f}]")
-    print(f"discordant pairs         : {len(only_b)} pass only under {args.baseline}, "
-          f"{len(only_c)} only under {args.compare}")
+    print(
+        f"{args.baseline:<8} pass rate       : {b_pass}/{len(paired)} = "
+        f"{b_pass / len(paired):.3f}   95% CI [{b_lo:.3f}, {b_hi:.3f}]"
+    )
+    print(
+        f"{args.compare:<8} pass rate       : {c_pass}/{len(paired)} = "
+        f"{c_pass / len(paired):.3f}   95% CI [{c_lo:.3f}, {c_hi:.3f}]"
+    )
+    print(
+        f"discordant pairs         : {len(only_b)} pass only under {args.baseline}, "
+        f"{len(only_c)} only under {args.compare}"
+    )
     print("=" * 66)
     print("Compare the gap against the checker's own 0.047 verdict flip rate:")
-    print(f"  {len(only_b) + len(only_c)} of {len(paired)} pairs disagree "
-          f"({(len(only_b) + len(only_c)) / len(paired):.3f})")
+    print(
+        f"  {len(only_b) + len(only_c)} of {len(paired)} pairs disagree "
+        f"({(len(only_b) + len(only_c)) / len(paired):.3f})"
+    )
 
     out = {
         "arm": args.arm,

@@ -41,9 +41,7 @@ def _agrees(row: dict[str, Any]) -> bool:
     """Correct = the label matches ground truth. Not "flagged and real" --
     that definition makes a correctly suppressed false positive count as
     wrong for both arms; see metrics.agreement_vectors."""
-    return bool(
-        (row["label"] == "true_secret") == (row["ground_truth_outcome"] == "true_positive")
-    )
+    return bool((row["label"] == "true_secret") == (row["ground_truth_outcome"] == "true_positive"))
 
 
 def _mcnemar(a_rows: dict[str, Any], b_rows: dict[str, Any]) -> dict[str, Any]:
@@ -86,6 +84,7 @@ def _calibration(rows: list[dict[str, Any]]) -> dict[str, Any]:
     ]
 
     edges = [0.70 + 0.02 * i for i in range(16)]
+
     def hist(vals: list[float]) -> list[int]:
         out = [0] * (len(edges) - 1)
         for v in vals:
@@ -200,13 +199,19 @@ def main() -> None:
     }
 
     m, sc, ac = payload["mcnemar"], payload["single"], payload["agentic"]
-    print(f"RQ2 / E2  --  single vs agentic, {args.treatment} treatment, "
-          f"{len(shared)} shared candidates")
+    print(
+        f"RQ2 / E2  --  single vs agentic, {args.treatment} treatment, "
+        f"{len(shared)} shared candidates"
+    )
     print()
-    print(f"  label disagreements   : {disagreements}/{len(shared)} "
-          f"({payload['label_disagreement_rate']:.1%})")
-    print(f"  paired McNemar        : only-single={m['only_a_correct']} "
-          f"only-agentic={m['only_b_correct']}  chi2={m['statistic']:.3f}  p={m['p_value']:.3f}")
+    print(
+        f"  label disagreements   : {disagreements}/{len(shared)} "
+        f"({payload['label_disagreement_rate']:.1%})"
+    )
+    print(
+        f"  paired McNemar        : only-single={m['only_a_correct']} "
+        f"only-agentic={m['only_b_correct']}  chi2={m['statistic']:.3f}  p={m['p_value']:.3f}"
+    )
     print()
     print(f"  {'':<24}{'single':>14}{'agentic':>14}{'ratio':>9}")
     for label, key, fmt in (
@@ -227,16 +232,20 @@ def main() -> None:
         ("mean conf. when wrong", "mean_confidence_when_wrong", ".3f"),
         ("separation", "separation", ".3f"),
     ):
-        print(f"  {label:<24}{format(sc['calibration'][key], fmt):>14}"
-              f"{format(ac['calibration'][key], fmt):>14}")
+        print(
+            f"  {label:<24}{format(sc['calibration'][key], fmt):>14}"
+            f"{format(ac['calibration'][key], fmt):>14}"
+        )
     print(f"  {'-- flagged rows only --':<24}")
     for label, key in (
         ("mean conf. when right", "mean_confidence_when_right"),
         ("mean conf. when wrong", "mean_confidence_when_wrong"),
         ("separation", "separation"),
     ):
-        print(f"  {label:<24}{sc['calibration']['flagged_only'][key]:>14.3f}"
-              f"{ac['calibration']['flagged_only'][key]:>14.3f}")
+        print(
+            f"  {label:<24}{sc['calibration']['flagged_only'][key]:>14.3f}"
+            f"{ac['calibration']['flagged_only'][key]:>14.3f}"
+        )
 
     out = Path(args.out)
     out.write_text(json.dumps(payload, indent=2), encoding="utf-8")

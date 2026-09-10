@@ -7,6 +7,7 @@ from typing import Any
 from credhunter_x.classifiers.tools.get_gitleaks_rule import get_gitleaks_rule
 from credhunter_x.models.classification import Label, Severity
 from credhunter_x.pipeline.orchestrator import ScanResult
+from credhunter_x.reporting.rule_titles import rule_title
 
 # Tracks pyproject.toml's [project].version -- SARIF's driver.version is
 # informational only, not worth wiring up importlib.metadata for.
@@ -56,7 +57,9 @@ def build_sarif_report(results: list[ScanResult]) -> dict[str, Any]:
 def _build_rule(rule_id: str) -> dict[str, Any]:
     return {
         "id": rule_id,
-        "shortDescription": {"text": get_gitleaks_rule(rule_id)},
+        "name": rule_id,
+        "shortDescription": {"text": rule_title(rule_id)},
+        "fullDescription": {"text": get_gitleaks_rule(rule_id)},
     }
 
 

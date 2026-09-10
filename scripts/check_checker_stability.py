@@ -189,8 +189,7 @@ def main() -> None:
     if blocked:
         print(f"guard-blocked (excluded) : {len(blocked)}  {sorted(blocked)}")
     print(f"VERDICT flip rate        : {verdict_flip:.3f}  ({d_total}/{p_total} pairs)")
-    print(f"  rows that ever flipped : {len(flipped)}/{len(complete)}  "
-          f"95% CI [{lo:.3f}, {hi:.3f}]")
+    print(f"  rows that ever flipped : {len(flipped)}/{len(complete)}  95% CI [{lo:.3f}, {hi:.3f}]")
     print(f"  verdict Fleiss kappa   : {kappa:.3f}")
     print(f"ELEMENT flip rate        : {element_flip:.3f}  ({el_d}/{el_p} pairs)")
     if unstable_elements:

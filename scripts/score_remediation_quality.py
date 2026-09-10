@@ -317,9 +317,7 @@ def main() -> None:
     print(f"\n{DENOMINATOR_NOTE}")
 
     if args.out:
-        _write_rows(
-            Path(args.out), results, stem=stem, args=args, blocked=blocked, failed=failed
-        )
+        _write_rows(Path(args.out), results, stem=stem, args=args, blocked=blocked, failed=failed)
 
 
 if __name__ == "__main__":

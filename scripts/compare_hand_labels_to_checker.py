@@ -92,8 +92,9 @@ def main() -> None:
     if args.scores is not None:
         paths = {_ANY_ARM: args.scores}
     else:
-        pairs = {(r.get("arm"), r.get("treatment")) for rows in rows_by_candidate.values()
-                 for r in rows}
+        pairs = {
+            (r.get("arm"), r.get("treatment")) for rows in rows_by_candidate.values() for r in rows
+        }
         if any(not a or not t for a, t in pairs):
             print("CSV has no arm/treatment columns -- pass --scores explicitly")
             return
