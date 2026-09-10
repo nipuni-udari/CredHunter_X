@@ -14,6 +14,16 @@ from credhunter_x.pipeline.orchestrator import ScanOutcome, ScanResult
 runner = CliRunner()
 
 
+@pytest.fixture(autouse=True)
+def _stub_llm_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The CLI constructs Settings() before scan_repository is patched, so
+    without these the suite passes only on a machine that happens to have a
+    .env -- and fails everywhere else, CI included. Nothing here reaches a
+    provider; every test patches the scan away."""
+    monkeypatch.setenv("LLM_MODEL", "test/model")
+    monkeypatch.setenv("LLM_API_KEY", "test-key")
+
+
 def _scan_result(label: Label, file_path: str = "app/config.py") -> ScanResult:
     candidate = Candidate(
         id=f"{file_path}:rule:1",
