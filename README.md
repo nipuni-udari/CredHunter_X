@@ -1,4 +1,12 @@
-# CredHunter-X
+<p align="center">
+  <img src="assets/logo.png" width="380" alt="CredHunter-X">
+</p>
+
+<p align="center">
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-6d28d9"></a>
+  <img alt="Python 3.11+" src="https://img.shields.io/badge/python-3.11%2B-3776ab">
+  <img alt="312 tests" src="https://img.shields.io/badge/tests-312%20passing-1a7f4b">
+</p>
 
 **Finds hardcoded secrets in Python code, then works out which ones are real.**
 
@@ -247,13 +255,39 @@ jq '.runs[0].results[] | {rule: .ruleId, level: .level, message: .message.text}'
 
 ---
 
+## Releases
+
+Not on PyPI. Install straight from a tag:
+
+```bash
+pip install "git+https://github.com/nipuni-udari/CredHunter_X.git@v1"
+```
+
+Or from a built wheel attached to a release, which needs no git:
+
+```bash
+pip install https://github.com/nipuni-udari/CredHunter_X/releases/download/v1.0.8/credhunter_x-0.1.0-py3-none-any.whl
+```
+
+Pin a tag rather than tracking `main`, or a workflow's behaviour changes
+underneath it. `@v1` moves forward with each `v1.x`; an exact tag like
+`@v1.0.8` never moves, which is the one to cite.
+
+[`.github/workflows/release.yml`](.github/workflows/release.yml) builds the
+wheel and sdist on every `v*` tag, runs `twine check` over them, and publishes
+a release page with generated notes and both files attached. It can also be
+run from the Actions tab against an existing tag, for tags pushed before the
+workflow existed.
+
+---
+
 ## Status
 
 Working and tested: two-detector candidate collection (GitLeaks + TruffleHog),
 two classifier arms (single-prompt and agentic/tool-using), four sanitisation
 treatments, the fail-closed leak guard, the evaluation harness against CredData
 ground truth, the remediation-quality scoring pipeline, SARIF/HTML reporting,
-and the composite GitHub Action. **299 tests passing**, no API calls needed to
+and the composite GitHub Action. **312 tests passing**, no API calls needed to
 run them.
 
 Proven live end to end against
@@ -264,9 +298,6 @@ fake" tell correctly failed the check — SARIF alert in the Security tab, HTML
 report attached as a workflow artifact. That run used a hand-written workflow
 installing from a pinned tag; `action.yml` packages the same steps behind a
 single `uses:` line.
-
-Not published to PyPI. The action installs from this repository, so a tag is
-all you need.
 
 ---
 
@@ -360,7 +391,7 @@ uv run python scripts/filter_python_creddata.py
 uv sync
 uv run pre-commit install
 
-uv run pytest -m "not live"      # 299 tests, no API calls -- what CI runs
+uv run pytest -m "not live"      # 312 tests, no API calls -- what CI runs
 uv run pytest -m live            # real API calls against the configured provider
 uv run ruff check . && uv run ruff format --check . && uv run mypy src
 ```
