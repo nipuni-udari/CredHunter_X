@@ -42,12 +42,14 @@ def _logo() -> str:
 _STYLE = """
 :root {
   --bg:#fbfbfd; --card:#fff; --ink:#16161d; --muted:#5f6470; --line:#e4e4ec;
-  --brand:#6d28d9; --crit:#b3261e; --warn:#9a6700; --ok:#1a7f4b;
+  --brand:#6d28d9; --brand-soft:#f1ebfe;
+  --crit:#c62828; --high:#e05a1c; --warn:#9a6700; --ok:#1a7f4b;
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg:#0e0e13; --card:#17171f; --ink:#ececf2; --muted:#9a9aa8; --line:#2a2a36;
-    --brand:#a78bfa; --crit:#ff8a80; --warn:#e3b341; --ok:#56d68a;
+    --bg:#0e0e13; --card:#17171f; --ink:#f2f2f7; --muted:#a8a8b8; --line:#2f2f3d;
+    --brand:#b39dfc; --brand-soft:rgba(124,58,237,.16);
+    --crit:#e5484d; --high:#e07a3c; --warn:#d4a017; --ok:#3fb27f;
   }
 }
 * { box-sizing:border-box; }
@@ -76,22 +78,98 @@ h2 { font-size:1.05rem; margin:2.5rem 0 1rem; padding-bottom:.4rem;
 .finding { background:var(--card); border:1px solid var(--line); border-radius:10px;
            padding:1rem 1.15rem; margin-bottom:.85rem; }
 .finding.is-dismissed { opacity:.72; }
-.head { display:flex; flex-wrap:wrap; align-items:center; gap:.55rem; margin-bottom:.7rem; }
+.head { display:flex; flex-wrap:wrap; align-items:center; gap:.5rem; margin-bottom:.8rem; }
 .loc { font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:.86rem;
-       background:rgba(125,125,150,.13); padding:.2rem .45rem; border-radius:5px; }
-.rule { font-size:.86rem; color:var(--muted); }
-.badge { font-size:.72rem; font-weight:650; text-transform:uppercase; letter-spacing:.04em;
-         padding:.16rem .45rem; border-radius:20px; border:1px solid currentColor; }
-.sev-critical,.sev-high { color:var(--crit); }
-.sev-medium { color:var(--warn); }
-.sev-low { color:var(--muted); }
-.conf { margin-left:auto; font-size:.78rem; color:var(--muted); }
-.field { margin-top:.6rem; }
-.field b { display:block; font-size:.72rem; text-transform:uppercase; letter-spacing:.05em;
-           color:var(--muted); margin-bottom:.15rem; font-weight:650; }
-.field p { margin:0; font-size:.92rem; }
-.fix { border-left:3px solid var(--brand); padding-left:.75rem; }
+       font-weight:600; background:rgba(125,125,150,.16); padding:.22rem .5rem;
+       border-radius:5px; }
+.rule { font-size:.78rem; font-weight:650; letter-spacing:.01em; color:var(--brand);
+        background:var(--brand-soft); padding:.22rem .55rem; border-radius:5px; }
+.badge { font-size:.7rem; font-weight:700; text-transform:uppercase; letter-spacing:.06em;
+         padding:.2rem .55rem; border-radius:20px; color:#fff; }
+.sev-critical { background:var(--crit); } .sev-high { background:var(--high); }
+.sev-medium { background:var(--warn); } .sev-low { background:var(--muted); }
+.conf { margin-left:auto; font-size:.74rem; font-weight:650; letter-spacing:.03em;
+        text-transform:uppercase; color:var(--ink); background:rgba(125,125,150,.16);
+        border-radius:20px; padding:.2rem .6rem; }
+.conf b { font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-weight:700; }
+.field { margin-top:.75rem; }
+.field b { display:block; font-size:.7rem; text-transform:uppercase; letter-spacing:.08em;
+           margin-bottom:.25rem; font-weight:700; color:var(--brand); }
+.field p { margin:0; font-size:.93rem; }
+.fix { border-left:3px solid var(--brand); background:var(--brand-soft);
+       border-radius:0 8px 8px 0; padding:.6rem .85rem; }
+.fix b { color:var(--brand); }
 .empty { color:var(--muted); font-style:italic; }
+
+.filters { position:sticky; top:0; z-index:5; display:flex; flex-wrap:wrap; gap:.5rem;
+           align-items:center; background:var(--bg); border-bottom:1px solid var(--line);
+           padding:.7rem 0; margin-bottom:.5rem; }
+.filters label { font-size:.72rem; text-transform:uppercase; letter-spacing:.06em;
+                 font-weight:700; color:var(--muted); }
+.chip { font:inherit; font-size:.78rem; font-weight:600; cursor:pointer; color:var(--muted);
+        background:var(--card); border:1px solid var(--line); border-radius:20px;
+        padding:.25rem .7rem; }
+.chip:hover { border-color:var(--brand); color:var(--ink); }
+.chip[aria-pressed="true"] { background:var(--brand); border-color:var(--brand); color:#fff; }
+.filters select, .filters input { font:inherit; font-size:.82rem; color:var(--ink);
+        background:var(--card); border:1px solid var(--line); border-radius:7px;
+        padding:.3rem .5rem; }
+.filters input { flex:1; min-width:140px; }
+.shown { margin-left:auto; font-size:.76rem; color:var(--muted); }
+.is-hidden { display:none; }
+"""
+
+# Client-side only: the report is one file opened from disk, so filtering has
+# to happen in the page. Tiles stay real anchors and still work without JS.
+_SCRIPT = """
+const findings = [...document.querySelectorAll('.finding')];
+const state = {label:'', sev:'', rule:'', q:''};
+const shown = document.querySelector('.shown');
+
+function apply() {
+  let n = 0;
+  for (const el of findings) {
+    const d = el.dataset;
+    const hit = (!state.label || d.label === state.label)
+      && (!state.sev || d.severity === state.sev)
+      && (!state.rule || d.rule === state.rule)
+      && (!state.q || el.textContent.toLowerCase().includes(state.q));
+    el.classList.toggle('is-hidden', !hit);
+    if (hit) n++;
+  }
+  for (const h of document.querySelectorAll('h2[id]')) {
+    const group = [];
+    for (let s = h.nextElementSibling; s && s.tagName !== 'H2'; s = s.nextElementSibling) {
+      group.push(s);
+    }
+    const live = group.some(
+      s => s.classList.contains('finding') && !s.classList.contains('is-hidden')
+    );
+    const empty = group.filter(s => s.classList.contains('empty'));
+    const filtering = !!(state.sev || state.rule || state.q);
+    h.classList.toggle('is-hidden', !live && !empty.length);
+    for (const s of empty) s.classList.toggle('is-hidden', filtering);
+  }
+  shown.textContent = `showing ${n} of ${findings.length}`;
+}
+
+for (const b of document.querySelectorAll('.chip[data-sev]')) {
+  b.onclick = () => {
+    state.sev = b.dataset.sev === state.sev ? '' : b.dataset.sev;
+    for (const o of document.querySelectorAll('.chip[data-sev]')) {
+      o.setAttribute('aria-pressed', String(o.dataset.sev === state.sev));
+    }
+    apply();
+  };
+}
+document.querySelector('#rule-filter').onchange = e => { state.rule = e.target.value; apply(); };
+document.querySelector('#text-filter').oninput = e => {
+  state.q = e.target.value.trim().toLowerCase(); apply();
+};
+for (const t of document.querySelectorAll('.tile')) {
+  t.onclick = () => { state.label = t.dataset.label; apply(); };
+}
+apply();
 """
 
 
@@ -108,6 +186,7 @@ def build_html_report(results: list[ScanResult]) -> str:
         _build_section(label, [r for r in results if r.classification.label == label])
         for label in (Label.TRUE_SECRET, Label.UNCERTAIN, Label.FALSE_POSITIVE)
     )
+    filters = _build_filters(results)
 
     return f"""<!doctype html>
 <html lang="en">
@@ -124,16 +203,38 @@ def build_html_report(results: list[ScanResult]) -> str:
   {_build_tile(Label.UNCERTAIN, counts, "need review")}
   {_build_tile(Label.FALSE_POSITIVE, counts, "dismissed")}
 </div>
+{filters}
 {sections}
+<script>{_SCRIPT}</script>
 </body>
 </html>
 """
 
 
+def _build_filters(results: list[ScanResult]) -> str:
+    """Severity chips plus a rule dropdown built from the rules actually
+    present -- offering a filter that matches nothing is just noise."""
+    severities = {r.classification.severity for r in results}
+    chips = "".join(
+        f'<button class="chip" data-sev="{s}" aria-pressed="false">{escape(s)}</button>'
+        for s in (Severity.CRITICAL, Severity.HIGH, Severity.MEDIUM, Severity.LOW)
+        if s in severities
+    )
+    rules = sorted({rule_title(r.candidate.rule_id) for r in results})
+    options = "".join(f'<option value="{escape(r)}">{escape(r)}</option>' for r in rules)
+    return f"""<div class="filters">
+  <label>Severity</label>{chips}
+  <label>Rule</label>
+  <select id="rule-filter"><option value="">All</option>{options}</select>
+  <input id="text-filter" type="search" placeholder="Search file, reason, fix...">
+  <span class="shown"></span>
+</div>"""
+
+
 def _build_tile(label: Label, counts: dict[Label, int], what: str) -> str:
     anchor = _LABEL_ANCHORS[label]
     return (
-        f'<a class="tile {anchor}" href="#{anchor}">'
+        f'<a class="tile {anchor}" href="#{anchor}" data-label="{label}">'
         f'<span class="count">{counts[label]}</span>'
         f'<span class="what">{escape(what)}</span></a>'
     )
@@ -152,12 +253,14 @@ def _build_section(label: Label, rows: list[ScanResult]) -> str:
 
 def _build_finding(result: ScanResult, *, dismissed: bool) -> str:
     c, r = result.candidate, result.classification
-    return f"""<div class="finding{" is-dismissed" if dismissed else ""}">
+    rule = rule_title(c.rule_id)
+    return f"""<div class="finding{" is-dismissed" if dismissed else ""}"
+     data-label="{r.label}" data-severity="{r.severity}" data-rule="{escape(rule)}">
   <div class="head">
     <span class="loc">{escape(f"{c.file_path}:{c.line_start}")}</span>
-    <span class="rule">{escape(rule_title(c.rule_id))}</span>
+    <span class="rule">{escape(rule)}</span>
     <span class="badge sev-{r.severity}">{escape(r.severity)}</span>
-    <span class="conf">confidence {r.confidence:.2f}</span>
+    <span class="conf">confidence <b>{r.confidence:.2f}</b></span>
   </div>
   <div class="field"><b>Why</b><p>{escape(r.explanation)}</p></div>
   <div class="field fix"><b>How to fix it</b><p>{escape(r.remediation)}</p></div>
