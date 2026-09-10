@@ -132,6 +132,7 @@ runs:
         echo "exit-code=${code}" >> "$GITHUB_OUTPUT"
 
     - name: Publish to code scanning
+      id: sarif
       if: always() && inputs.upload-sarif == 'true' && hashFiles(inputs.sarif-file) != ''
       uses: github/codeql-action/upload-sarif@v3
       with:
@@ -147,14 +148,25 @@ runs:
         path: ${{ inputs.html-file }}
         if-no-files-found: ignore
 
-    - name: Link the report from the summary
-      # Runs after the upload because the artifact URL does not exist until then.
-      if: always() && inputs.job-summary == 'true' && steps.html.outputs.artifact-url != ''
+    - name: Link the reports from the summary
+      # Runs last: neither link exists until its upload has happened, and each
+      # is written only if that upload actually ran.
+      if: always() && inputs.job-summary == 'true'
       shell: bash
+      env:
+        SARIF_OUTCOME: ${{ steps.sarif.outcome }}
+        SARIF_URL: ${{ github.server_url }}/${{ github.repository }}/security/code-scanning?query=is%3Aopen+tool%3ACredHunter-X
+        ARTIFACT_URL: ${{ steps.html.outputs.artifact-url }}
       run: |
         {
-          echo ""
-          echo "📄 Remediation for each finding is in the HTML report — [download credhunter-x-report](${{ steps.html.outputs.artifact-url }})."
+          if [ "$SARIF_OUTCOME" = "success" ]; then
+            echo ""
+            echo "🔍 Each finding is also an alert in the [Security tab]($SARIF_URL), on its own file and line."
+          fi
+          if [ -n "$ARTIFACT_URL" ]; then
+            echo ""
+            echo "📄 Remediation for each finding is in the HTML report — [download credhunter-x-report]($ARTIFACT_URL)."
+          fi
         } >> "$GITHUB_STEP_SUMMARY"
 
     - name: Enforce scan result
