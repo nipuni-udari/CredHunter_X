@@ -5,6 +5,7 @@ from pathlib import Path
 
 from credhunter_x.models.classification import Label, Severity
 from credhunter_x.pipeline.orchestrator import ScanResult
+from credhunter_x.reporting.rule_titles import rule_title
 
 _SEVERITY_ORDER: dict[Severity, int] = {
     Severity.CRITICAL: 0,
@@ -19,26 +20,86 @@ _LABEL_SECTION_TITLES: dict[Label, str] = {
     Label.FALSE_POSITIVE: "Reviewed and dismissed as false positives",
 }
 
+_LABEL_ANCHORS: dict[Label, str] = {
+    Label.TRUE_SECRET: "found",
+    Label.UNCERTAIN: "review",
+    Label.FALSE_POSITIVE: "dismissed",
+}
+
+# Drawn rather than embedded: an inline SVG stays sharp at any size, survives
+# being opened offline, and keeps the report a single file with no binary.
+_LOGO = """
+<svg class="logo" viewBox="0 0 132 120" role="img" aria-label="CredHunter-X">
+  <defs>
+    <linearGradient id="chx" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#2e1065"/><stop offset="1" stop-color="#7c3aed"/>
+    </linearGradient>
+  </defs>
+  <g fill="url(#chx)">
+    <path d="M46 16h44L72 34H54L38 50v20l16 16h18l18 18H46L20 78V42z"/>
+    <rect x="46" y="44" width="15" height="32"/>
+    <rect x="46" y="52" width="34" height="15"/>
+    <path d="M76 30h20l30 72h-20z"/><path d="M106 30h20L96 102H76z"/>
+    <rect x="108" y="14" width="9" height="9"/>
+    <rect x="120" y="4" width="7" height="7"/>
+    <rect x="99" y="4" width="6" height="6"/>
+  </g>
+</svg>
+"""
+
 _STYLE = """
-body { font-family: system-ui, -apple-system, sans-serif; max-width: 960px;
-       margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
-h1 { font-size: 1.5rem; }
-h2 { font-size: 1.15rem; margin-top: 2.5rem; border-bottom: 1px solid #ddd;
-     padding-bottom: 0.3rem; }
-.summary { display: flex; gap: 1.5rem; margin: 1rem 0 2rem; }
-.summary div { background: #f4f4f4; border-radius: 6px; padding: 0.6rem 1rem; }
-.count { font-size: 1.4rem; font-weight: 600; display: block; }
-table { width: 100%; border-collapse: collapse; margin-bottom: 1.5rem; }
-th, td { text-align: left; padding: 0.5rem 0.6rem; border-bottom: 1px solid #eee;
-         vertical-align: top; font-size: 0.92rem; }
-th { color: #666; font-weight: 600; }
-code { background: #f4f4f4; padding: 0.1rem 0.3rem; border-radius: 3px;
-       font-size: 0.88em; }
-.sev-critical, .sev-high { color: #b3261e; font-weight: 600; }
-.sev-medium { color: #9a6700; font-weight: 600; }
-.sev-low { color: #555; }
-.dismissed { opacity: 0.65; }
-.empty { color: #777; font-style: italic; }
+:root {
+  --bg:#fbfbfd; --card:#fff; --ink:#16161d; --muted:#5f6470; --line:#e4e4ec;
+  --brand:#6d28d9; --crit:#b3261e; --warn:#9a6700; --ok:#1a7f4b;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg:#0e0e13; --card:#17171f; --ink:#ececf2; --muted:#9a9aa8; --line:#2a2a36;
+    --brand:#a78bfa; --crit:#ff8a80; --warn:#e3b341; --ok:#56d68a;
+  }
+}
+* { box-sizing:border-box; }
+body { font-family:system-ui,-apple-system,"Segoe UI",sans-serif; background:var(--bg);
+       color:var(--ink); max-width:1000px; margin:0 auto; padding:2.5rem 1.25rem 4rem;
+       line-height:1.55; }
+header { display:flex; align-items:center; gap:.9rem; margin-bottom:1.75rem; }
+.logo { width:52px; height:47px; flex:none; }
+h1 { font-size:1.4rem; margin:0; letter-spacing:-.01em; }
+h1 small { display:block; font-size:.8rem; font-weight:400; color:var(--muted);
+           letter-spacing:0; margin-top:.15rem; }
+.tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr));
+         gap:.85rem; margin-bottom:2.5rem; }
+.tile { display:block; text-decoration:none; color:inherit; background:var(--card);
+        border:1px solid var(--line); border-left:4px solid var(--muted);
+        border-radius:10px; padding:.85rem 1rem; transition:transform .12s, box-shadow .12s; }
+.tile:hover { transform:translateY(-2px); box-shadow:0 6px 18px rgba(0,0,0,.09);
+              border-color:var(--brand); }
+.tile .count { display:block; font-size:1.9rem; font-weight:650; line-height:1.1; }
+.tile .what { font-size:.85rem; color:var(--muted); }
+.tile.found { border-left-color:var(--crit); } .tile.found .count { color:var(--crit); }
+.tile.review { border-left-color:var(--warn); } .tile.review .count { color:var(--warn); }
+.tile.dismissed { border-left-color:var(--ok); } .tile.dismissed .count { color:var(--ok); }
+h2 { font-size:1.05rem; margin:2.5rem 0 1rem; padding-bottom:.4rem;
+     border-bottom:1px solid var(--line); scroll-margin-top:1rem; }
+.finding { background:var(--card); border:1px solid var(--line); border-radius:10px;
+           padding:1rem 1.15rem; margin-bottom:.85rem; }
+.finding.is-dismissed { opacity:.72; }
+.head { display:flex; flex-wrap:wrap; align-items:center; gap:.55rem; margin-bottom:.7rem; }
+.loc { font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:.86rem;
+       background:rgba(125,125,150,.13); padding:.2rem .45rem; border-radius:5px; }
+.rule { font-size:.86rem; color:var(--muted); }
+.badge { font-size:.72rem; font-weight:650; text-transform:uppercase; letter-spacing:.04em;
+         padding:.16rem .45rem; border-radius:20px; border:1px solid currentColor; }
+.sev-critical,.sev-high { color:var(--crit); }
+.sev-medium { color:var(--warn); }
+.sev-low { color:var(--muted); }
+.conf { margin-left:auto; font-size:.78rem; color:var(--muted); }
+.field { margin-top:.6rem; }
+.field b { display:block; font-size:.72rem; text-transform:uppercase; letter-spacing:.05em;
+           color:var(--muted); margin-bottom:.15rem; font-weight:650; }
+.field p { margin:0; font-size:.92rem; }
+.fix { border-left:3px solid var(--brand); padding-left:.75rem; }
+.empty { color:var(--muted); font-style:italic; }
 """
 
 
@@ -60,15 +121,16 @@ def build_html_report(results: list[ScanResult]) -> str:
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CredHunter-X scan report</title>
 <style>{_STYLE}</style>
 </head>
 <body>
-<h1>CredHunter-X scan report</h1>
-<div class="summary">
-  <div><span class="count">{counts[Label.TRUE_SECRET]}</span>secrets found</div>
-  <div><span class="count">{counts[Label.UNCERTAIN]}</span>need review</div>
-  <div><span class="count">{counts[Label.FALSE_POSITIVE]}</span>dismissed</div>
+<header>{_LOGO}<h1>CredHunter-X<small>scan report</small></h1></header>
+<div class="tiles">
+  {_build_tile(Label.TRUE_SECRET, counts, "secrets found")}
+  {_build_tile(Label.UNCERTAIN, counts, "need review")}
+  {_build_tile(Label.FALSE_POSITIVE, counts, "dismissed")}
 </div>
 {sections}
 </body>
@@ -76,41 +138,38 @@ def build_html_report(results: list[ScanResult]) -> str:
 """
 
 
+def _build_tile(label: Label, counts: dict[Label, int], what: str) -> str:
+    anchor = _LABEL_ANCHORS[label]
+    return (
+        f'<a class="tile {anchor}" href="#{anchor}">'
+        f'<span class="count">{counts[label]}</span>'
+        f'<span class="what">{escape(what)}</span></a>'
+    )
+
+
 def _build_section(label: Label, rows: list[ScanResult]) -> str:
     title = escape(_LABEL_SECTION_TITLES[label])
+    anchor = _LABEL_ANCHORS[label]
     if not rows:
-        return f'<h2>{title}</h2>\n<p class="empty">None.</p>\n'
+        return f'<h2 id="{anchor}">{title}</h2>\n<p class="empty">None.</p>\n'
 
     rows = sorted(rows, key=lambda r: _SEVERITY_ORDER.get(r.classification.severity, 99))
-    body_class = ' class="dismissed"' if label == Label.FALSE_POSITIVE else ""
-    table_rows = "\n".join(_build_row(r) for r in rows)
-    return f"""<h2>{title}</h2>
-<table{body_class}>
-<thead><tr>
-  <th>Location</th><th>Rule</th><th>Severity</th><th>Confidence</th>
-  <th>Explanation</th><th>Remediation</th>
-</tr></thead>
-<tbody>
-{table_rows}
-</tbody>
-</table>
-"""
+    findings = "\n".join(_build_finding(r, dismissed=label == Label.FALSE_POSITIVE) for r in rows)
+    return f'<h2 id="{anchor}">{title}</h2>\n{findings}\n'
 
 
-def _build_row(result: ScanResult) -> str:
+def _build_finding(result: ScanResult, *, dismissed: bool) -> str:
     c, r = result.candidate, result.classification
-    location = escape(f"{c.file_path}:{c.line_start}")
-    rule_id = escape(c.rule_id)
-    severity = escape(r.severity)
-    sev_class = f"sev-{r.severity}"
-    confidence = f"{r.confidence:.2f}"
-    explanation = escape(r.explanation)
-    remediation = escape(r.remediation)
-    return (
-        f"<tr><td><code>{location}</code></td><td>{rule_id}</td>"
-        f'<td class="{sev_class}">{severity}</td><td>{confidence}</td>'
-        f"<td>{explanation}</td><td>{remediation}</td></tr>"
-    )
+    return f"""<div class="finding{" is-dismissed" if dismissed else ""}">
+  <div class="head">
+    <span class="loc">{escape(f"{c.file_path}:{c.line_start}")}</span>
+    <span class="rule">{escape(rule_title(c.rule_id))}</span>
+    <span class="badge sev-{r.severity}">{escape(r.severity)}</span>
+    <span class="conf">confidence {r.confidence:.2f}</span>
+  </div>
+  <div class="field"><b>Why</b><p>{escape(r.explanation)}</p></div>
+  <div class="field fix"><b>How to fix it</b><p>{escape(r.remediation)}</p></div>
+</div>"""
 
 
 def write_html_report(results: list[ScanResult], path: Path) -> None:

@@ -92,9 +92,17 @@ def test_build_html_report_summary_counts_match_findings():
 
     html = build_html_report(results)
 
-    assert '<span class="count">2</span>secrets found' in html
-    assert '<span class="count">0</span>need review' in html
-    assert '<span class="count">1</span>dismissed' in html
+    assert '<span class="count">2</span><span class="what">secrets found</span>' in html
+    assert '<span class="count">0</span><span class="what">need review</span>' in html
+    assert '<span class="count">1</span><span class="what">dismissed</span>' in html
+
+
+def test_summary_tiles_link_to_their_own_section():
+    html = build_html_report([_scan_result(label=Label.TRUE_SECRET)])
+
+    for anchor in ("found", "review", "dismissed"):
+        assert f'href="#{anchor}"' in html
+        assert f'id="{anchor}"' in html
 
 
 def test_build_html_report_with_no_results_shows_empty_sections():
