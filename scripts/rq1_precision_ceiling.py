@@ -1,18 +1,8 @@
-"""How much of the achievable precision gain did the classifier actually capture?
+"""Estimates how much of the reachable precision gain the classifier captured.
 
-A gain from 0.577 to 0.624 reads as small against a ceiling of 1.000. But
-1.000 was never available: section 6.2.3 shows that the labels on
-generic.password-in-url track nothing visible in the code, so no
-context-based filter can resolve them. The right denominator is the gain
-that was reachable, not the gain that is arithmetically possible.
-
-This computes that denominator under assumptions stated in the output rather
-than buried, because the number is only as defensible as they are. The
-irreducible family is a parameter, not a constant, so the sensitivity is
-visible.
-
-Read-only, no API calls. Reproduces the published per-run precision before
-reporting anything derived from it.
+1.000 was never reachable, because the generic.password-in-url labels don't
+follow anything visible in the code. The ceiling is computed with that rule
+family as a parameter. Read-only; checks the published precision first.
 
 Usage:
     uv run python scripts/rq1_precision_ceiling.py
@@ -29,9 +19,8 @@ RESULTS = Path("results")
 SUFFIX = "_all_combined_gpt-5.6-luna"
 LOST = "lost"
 
-# The family section 6.2.3 argues is unresolvable from visible context. Held
-# as a parameter so the claim can be checked against a different assumption
-# rather than taken on trust.
+# The family treated as unresolvable from context. Kept as a parameter so
+# the result can be checked under other assumptions.
 IRREDUCIBLE_RULES = ("generic.password-in-url",)
 
 ARMS = ("single", "agentic")
@@ -57,8 +46,8 @@ def main() -> None:
     real = [r for r in scored if r["ground_truth_outcome"] == "true_positive"]
     not_real = [r for r in scored if r["ground_truth_outcome"] == "false_positive"]
 
-    # The detector flags everything it generated, so its confusion is the
-    # composition of the scored set itself.
+    # The detector flags everything it produced, so its confusion matrix is
+    # just the make-up of the scored set.
     det_tp, det_fp = len(real), len(not_real)
     det_p = _precision(det_tp, det_fp)
 
@@ -72,15 +61,13 @@ def main() -> None:
     print(f"  its false positives      : {len(irreducible_fp)}")
     print(f"  its true positives       : {len(irreducible_tp)}")
 
-    # Ceiling A -- a perfect context-based filter: suppresses every false
-    # positive whose label context can resolve, keeps every true positive, and
-    # is left with the irreducible family, on which it can do no better than
-    # the detector.
+    # Ceiling A: a perfect context filter. Removes every false positive that
+    # context can resolve, keeps every true positive, and does no better than the
+    # detector on the unresolvable family.
     ceil_a = _precision(det_tp, len(irreducible_fp))
 
-    # Ceiling B -- the same filter, but permitted to discard the irreducible
-    # family wholesale. Higher precision, but it throws away that family's real
-    # credentials, so it is a different product rather than a better classifier.
+    # Ceiling B: the same filter, but allowed to drop the unresolvable family
+    # altogether. Precision is higher, but it loses that family's real secrets.
     ceil_b_tp = det_tp - len(irreducible_tp)
     ceil_b = _precision(ceil_b_tp, 0)
 
@@ -126,9 +113,7 @@ def main() -> None:
             if r["label"] != "true_secret" and r["ground_truth_outcome"] == "true_positive"
         )
         p = _precision(tp, fp)
-        # The detector baseline for this arm's own scored set -- agentic
-        # metadata_only aside, these are the same 182 rows, but recomputing
-        # keeps the comparison like for like.
+        # Detector baseline on this arm's own scored set.
         arm_det = _precision(
             sum(1 for r in rows if r["ground_truth_outcome"] == "true_positive"),
             sum(1 for r in rows if r["ground_truth_outcome"] == "false_positive"),

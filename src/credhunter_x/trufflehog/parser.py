@@ -13,21 +13,15 @@ def parse_trufflehog_report(
     repo_id: str = "",
     context_lines: int = 10,
 ) -> list[Candidate]:
-    """Convert trufflehog3's raw JSON findings into Candidate objects.
-    file_path is relative to source_root (POSIX-style), matching the
-    gitleaks parser's convention. trufflehog3 doesn't report a fixed
-    "secret" span the way gitleaks does -- its "secret" field is often just
-    the high-entropy fragment within the line, not the whole token -- so
-    value_start/value_end come from searching for it in the line, same as
-    the gitleaks parser. trufflehog3 also reports no entropy score, so it's
-    computed here from the matched value itself."""
+    """Converts trufflehog3's JSON findings into Candidate objects. file_path is
+    relative to source_root, as in the gitleaks parser. trufflehog3's "secret"
+    is often only the high-entropy part of a token, so value_start/value_end
+    come from searching the line, and entropy is computed here."""
     source_root = source_root.resolve()
     file_cache: dict[Path, list[str]] = {}
     candidates = []
-    # trufflehog3's generic high-entropy rule can flag more than one distinct
-    # secret on the same line -- file:rule:line alone isn't a unique id then,
-    # which silently drops one of the two from classify_candidates' id-keyed
-    # results (last one processed wins). An occurrence index closes that.
+    # The high-entropy rule can flag two secrets on one line, so file:rule:line
+    # isn't unique; an occurrence index stops one result being lost.
     occurrence_counts: dict[tuple[str, str, int], int] = {}
 
     for finding in findings:

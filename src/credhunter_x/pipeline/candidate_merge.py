@@ -15,23 +15,12 @@ def _same_secret(a: Candidate, b: Candidate) -> bool:
 
 
 def merge_candidates(primary: list[Candidate], secondary: list[Candidate]) -> list[Candidate]:
-    """Combines two independently-generated candidate lists (e.g. gitleaks +
-    trufflehog) so the same real secret never reaches the LLM twice. Two
-    candidates count as the same secret when they're in the same file,
-    their line ranges overlap, and one's matched value is a substring of
-    the other's -- trufflehog often reports just the high-entropy fragment
-    it matched, not the whole token gitleaks reports. `primary`'s version
-    is kept on a match (its value-offset resolution is the tested one),
-    with `source` updated to record that both detectors found it.
-
-    A candidate absorbs *every* other detection of the same secret, not just
-    the first. One value routinely trips several rules at once -- gitleaks'
-    `private-key` and trufflehog's `private.key` on one PEM header, or
-    `generic-api-key` + `generic.secret` + `high-entropy` on one assignment --
-    and pairing them off one-to-one left the surplus behind as its own
-    candidate, costing an LLM call per surplus row and raising one alert per
-    rule instead of one per secret. Repeats inside a single detector's own
-    output are dropped for the same reason."""
+    """Merges two candidate lists (e.g. gitleaks and trufflehog) so the same
+    secret never reaches the LLM twice. Two candidates match if they are in the
+    same file, their line ranges overlap and one value contains the other. The
+    primary candidate is kept and absorbs every match, since one value often
+    trips several rules; its source records both detectors. Repeats within one
+    detector's output are dropped too."""
     merged: list[Candidate] = []
     secondary_matched = [False] * len(secondary)
 

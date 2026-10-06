@@ -1,9 +1,6 @@
-"""Computes E1's full metric set for every run already on disk.
-
-The eight runs were scored before candidate-level F1, FPR, MCC, bootstrap
-CIs and the per-rule breakdown existed in the harness. All of them are
-derivable from the stored rows, so this recomputes them: read-only, no LLM
-calls, no re-scan, and the existing *_summary.json files are untouched.
+"""Computes the full E1 metric set (candidate-level F1, FPR, MCC, bootstrap
+CIs and the per-rule breakdown) from the stored rows of every run.
+Read-only: no LLM calls, and the *_summary.json files are not changed.
 
 Usage:
     uv run python scripts/rescore_e1_metrics.py
@@ -87,8 +84,8 @@ def main() -> None:
         return
 
     out: dict[str, dict] = {}
-    # The detector flags every candidate it generated, so its own row set
-    # is any arm's rows with flagged forced true.
+    # The detector flags every candidate it produced, so its rows are any
+    # arm's rows with flagged set to true.
     out["detector_combined"] = _score(_load(paths[0]), flag_everything=True)
 
     header = (

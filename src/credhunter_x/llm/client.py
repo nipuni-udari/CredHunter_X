@@ -25,9 +25,8 @@ class ToolCall:
 
 @dataclass(frozen=True)
 class LLMToolResponse:
-    """One turn in a tool-calling conversation. `text` is the final answer
-    only when `tool_calls` is empty; otherwise the caller must dispatch
-    the tool calls and continue."""
+    """One turn of a tool-calling conversation. text is the final answer only
+    when tool_calls is empty; otherwise the caller runs the tools and goes on."""
 
     text: str
     tool_calls: list[ToolCall] = field(default_factory=list)
@@ -37,9 +36,8 @@ class LLMToolResponse:
 
 
 class LLMClient(Protocol):
-    """Every classifier depends on this Protocol, never a concrete provider.
-    Guard-related kwargs live here too so classifiers always pass them
-    through; an unguarded client just ignores them."""
+    """The interface every classifier uses instead of a concrete provider.
+    It includes the guard arguments, which an unguarded client ignores."""
 
     def generate(
         self,
@@ -60,7 +58,6 @@ class LLMClient(Protocol):
         rule_id: str = "",
         raw_permit_candidate_id: str | None = None,
     ) -> LLMToolResponse:
-        """messages/tools use the OpenAI chat-completions/function-calling
-        schema. The guard checks the whole message history every call, not
-        just the latest message."""
+        """messages and tools use the OpenAI chat-completions schema. The guard
+        checks the whole message history on every call."""
         ...

@@ -4,34 +4,9 @@ from credhunter_x.models.candidate import Candidate
 from credhunter_x.models.treatment import MaskedSpan, SanitisedContext, Treatment
 
 # ---------------------------------------------------------------------------
-# FIX 1: "test fixture" removed from the false-positive examples, and the
-# CredData labelling convention stated explicitly. CredData deliberately
-# labels credentials in test/ directories as True ("to prevent the case of
-# missing real usable credentials"), so instructing the model to treat test
-# fixtures as false positives systematically penalises recall against the
-# ground truth.
-#
-# FIX 2: the "judge from surrounding code" guidance now lives HERE, in the
-# shared task description, so that every treatment (including RAW) receives
-# identical judgement instructions. Previously only the redacted treatments
-# were coached to use context, which confounded H4 -- a masked-vs-raw result
-# could have been caused by the differing instructions rather than by where
-# the discriminative signal actually lives.
-#
-# FIX 5: FIX 1 closed the *location* loophole but left the *authenticity*
-# one open, and the model went straight through it. Measured on the dev
-# split's misses, every single one reasoned that the value was "a synthetic
-# fixture token, not an active credential" / "not evidenced as a live
-# credential" -- never that its location made it safe. Asking for "an actual
-# credential that would be a real security risk if exposed" invited exactly
-# that, so the convention below now names the authenticity excuses too, and
-# says plainly that absence of proof-of-liveness is not evidence of safety.
-# Two further changes here: the scanner is no longer described as GitLeaks
-# alone (trufflehog3's entropy rule produces most candidates, and telling
-# the model its evidence came from pattern matching is simply false), and
-# the false-positive examples -- previously the only concrete guidance in
-# the prompt, all pointing one way -- are now stated as a closed list of
-# things that genuinely are not credential material.
+# Shared task description, the same in every arm and treatment. It follows
+# CredData's convention that credentials in test folders count as real, and
+# says that a value isn't safe just because it can't be shown to be live.
 # ---------------------------------------------------------------------------
 _TASK_DESCRIPTION = """You are reviewing a candidate secret flagged by \
 automated secret scanners — pattern-matching rules and statistical entropy \
@@ -63,16 +38,9 @@ such as "xxx" or "<your-key-here>", or a reference to a variable rather \
 than a literal value."""
 
 # ---------------------------------------------------------------------------
-# FIX 3: "uncertain" removed from the label set. Ground truth is binary
-# (T/F), and McNemar's test requires paired binary outcomes; a third label
-# leaves no principled scoring rule and makes arms non-comparable if they
-# emit differing numbers of abstentions. Uncertainty is carried by the
-# existing `confidence` float instead, which loses nothing.
-#
-# FIX 4: remediation now explicitly requests the multiple elements the RQ3
-# reference standard grades (stop storing in source / rotation / repository
-# changes), rather than "a short, actionable next step" (singular), which
-# would have underproduced against an 80% multi-element pass threshold.
+# Response contract: two labels only, because the ground truth is binary;
+# confidence carries the uncertainty. The remediation request names every
+# element the RQ3 reference standard grades.
 # ---------------------------------------------------------------------------
 _RESPONSE_CONTRACT = """Respond with a JSON object matching this contract:
 - label: "true_secret" or "false_positive"
@@ -114,10 +82,8 @@ stop storing the value in source, whether the credential needs rotating or \
 revoking, and any repository changes required"""
 
 # ---------------------------------------------------------------------------
-# Treatment notes now state ONLY the factual difference between treatments:
-# what was replaced, with what, and what that placeholder does or does not
-# tell you. All judgement guidance has moved to _TASK_DESCRIPTION so it is
-# identical across arms. (FIX 2, continued.)
+# Treatment notes only say what was replaced and with what. All judgement
+# guidance is in _TASK_DESCRIPTION, so it is the same for every treatment.
 # ---------------------------------------------------------------------------
 _MASKED_NOTE = """Note: this code window has been sanitised. Every candidate \
 secret value (this one and any others in the surrounding lines) has been \
@@ -155,18 +121,9 @@ _TREATMENT_NOTES: dict[Treatment, str] = {
 
 
 def _format_span_metadata(span: MaskedSpan) -> str:
-    """Render one sanitised span's metadata.
-
-    Spans are labelled as either the candidate under review or a neighbour,
-    so the model is never left guessing which metadata block belongs to the
-    value it is judging. The role comes from span.is_target, set when the
-    span was built: deriving it here from line ranges instead labelled every
-    secret sharing the target's line as the candidate under review, which
-    handed the model several contradictory metadata blocks (a fifth of the
-    corpus sits on a shared line). `prefix_hint` is rendered as "prefix"
-    rather than "rule" to avoid collision with the actual scanner rule line
-    below.
-    """
+    """Renders one sanitised span's metadata, labelled as the candidate under
+    review or a neighbour (from span.is_target). prefix_hint is shown as "prefix"
+    so it isn't confused with the rule line."""
     metadata = span.metadata
     role = "candidate under review" if span.is_target else "neighbouring candidate"
     return (
@@ -179,11 +136,8 @@ def _format_span_metadata(span: MaskedSpan) -> str:
 def _context_sections(candidate: Candidate, context: SanitisedContext) -> list[str]:
     sections = []
 
-    # The treatment note is emitted unconditionally, not only when
-    # masked_spans is non-empty. Previously a RAW candidate with no
-    # neighbours produced a structurally different prompt (no note, no
-    # metadata block) from a RAW candidate that happened to sit near
-    # another secret -- prompt shape varied within a single treatment.
+    # Always add the treatment note, even with no masked spans, so every
+    # prompt in a treatment has the same shape.
     sections.append(_TREATMENT_NOTES[context.treatment])
 
     if context.masked_spans:
@@ -200,13 +154,13 @@ def _context_sections(candidate: Candidate, context: SanitisedContext) -> list[s
 
 
 def build_classification_prompt(candidate: Candidate, context: SanitisedContext) -> str:
-    """Arm A -- single call, immediate structured answer."""
+    """Arm A: one call, answered straight away in structured form."""
     sections = [_TASK_DESCRIPTION, _RESPONSE_CONTRACT, *_context_sections(candidate, context)]
     return "\n\n".join(sections)
 
 
 def build_agentic_prompt(candidate: Candidate, context: SanitisedContext) -> str:
-    """Arm B's initial prompt -- same framing as Arm A, but with the
-    tool-usage addendum instead of an immediate response contract."""
+    """Arm B's first prompt: the same framing as Arm A, with the tool
+    instructions instead of the immediate-answer contract."""
     sections = [_TASK_DESCRIPTION, _AGENTIC_ADDENDUM, *_context_sections(candidate, context)]
     return "\n\n".join(sections)

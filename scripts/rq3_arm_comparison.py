@@ -1,13 +1,8 @@
-"""Does the agentic arm give BETTER remediation advice than the single arm?
+"""Compares remediation advice quality between the two arms (RQ3).
 
-RQ1/RQ2 compared the arms on labels and found a tie; that says nothing about
-advice quality, which only RQ3 measures. No LLM calls -- pure aggregation
-over the two scored files.
-
-Per-arm pass rates use each arm's own full scoreable set. The arm COMPARISON
-is paired on the candidates both arms flagged: rows only one arm flagged have
-nothing to pair against, and including them would mix "is the advice better?"
-with "did the arms flag different things?".
+Each arm's pass rate uses its own scoreable set. The comparison itself is
+paired on candidates both arms flagged, so it measures the advice and not
+which candidates each arm happened to flag. No LLM calls.
 
 Usage:
     uv run python scripts/rq3_arm_comparison.py
@@ -24,7 +19,7 @@ from credhunter_x.evaluation.metrics import mcnemar_test, wilson_score_interval
 SINGLE = Path("results/rq3_scores_single_raw.json")
 AGENTIC = Path("results/rq3_scores_agentic_raw.json")
 OUT = Path("results/rq3_arm_comparison.json")
-FLIP = 0.047  # checker's own verdict flip rate, results/rq3_checker_stability.json
+FLIP = 0.047  # the checker's own verdict flip rate (results/rq3_checker_stability.json)
 
 
 def load(path: Path) -> dict[str, dict]:

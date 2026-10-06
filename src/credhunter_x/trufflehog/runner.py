@@ -17,18 +17,12 @@ def run_trufflehog(
     trufflehog_binary: str = "trufflehog3",
     include_extensions: tuple[str, ...] | None = None,
 ) -> list[dict[str, Any]]:
-    """Scan `source` with trufflehog3 and return the raw list of issue dicts
-    from its JSON report (empty list if nothing found). --zero makes it
-    always exit 0 on a normal run, so any nonzero exit here is a real error.
+    """Scans source with trufflehog3 (Radostev, 2024) and returns the issue dicts
+    from its JSON report. --zero makes it exit 0 normally, so any other exit is an error.
 
-    include_extensions, if given (e.g. (".py",)), restricts the scan to
-    files with those suffixes by scanning a filtered copy of `source`
-    instead of `source` itself. Not just a convenience: a single
-    pathological file elsewhere in a large tree can crash trufflehog3's own
-    entropy scan with a MemoryError (found against CredData's own corpus --
-    one file with a single ~700,000-character line). Filtering out
-    non-matching files before trufflehog3 ever reads them avoids that whole
-    class of problem, not just the one file that happened to trigger it."""
+    include_extensions (e.g. (".py",)) scans a filtered copy of source holding
+    only those files. This also stops very large non-Python files from
+    exhausting trufflehog3's memory."""
     source = source.resolve()
 
     with tempfile.TemporaryDirectory() as tmp:

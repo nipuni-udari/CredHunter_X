@@ -1,32 +1,18 @@
-"""Research evaluation script: scores a detector alone, or a detector + an
-LLM classifier (Arm A single-prompt, or Arm B agentic), against CredData's
-ground truth. Costs real LLM quota when --arm single/agentic is used — not
-part of CI, run manually.
+r"""Scores a detector alone, or a detector plus an LLM classifier (Arm A or
+Arm B), against CredData's ground truth. The LLM arms cost quota, so this is
+run by hand.
 
---source picks which scanner(s) generate candidates (default gitleaks, for
-backwards compatibility); "combined" runs gitleaks and trufflehog3
-independently and merges out any secret both flag (see
-pipeline/candidate_merge.py) so it isn't sent to the LLM twice. --arm
-gitleaks_only skips the LLM entirely regardless of --source -- it just
-reports whichever source was configured.
-
---candidates-cache freezes the scan so every arm and treatment is scored on
-one identical candidate set (see _load_candidates_cache). It is off by
-default: re-scanning is the correct behaviour for a real repository, which
-gains new secrets between runs.
+--source is gitleaks (default), trufflehog or combined; combined merges
+findings of the same secret so it is only sent once. --candidates-cache
+freezes the scan so every arm and treatment scores the same candidates.
 
 Usage:
     uv run python scripts/run_evaluation.py --split dev --arm gitleaks_only
-    uv run python scripts/run_evaluation.py --split dev --arm gitleaks_only --source trufflehog
     uv run python scripts/run_evaluation.py --split dev --arm gitleaks_only --source combined
-    uv run python scripts/run_evaluation.py --split all --arm single --treatment raw
     uv run python scripts/run_evaluation.py --split all --arm single --treatment masked
-    uv run python scripts/run_evaluation.py --split all --arm single --treatment pseudonymised
-    uv run python scripts/run_evaluation.py --split all --arm single --treatment metadata_only
-    uv run python scripts/run_evaluation.py --split all --arm agentic --treatment raw
     uv run python scripts/run_evaluation.py --split all --arm agentic --source combined
 
-    # scan once, then score every arm/treatment on that same frozen set:
+    # scan once, then score every arm and treatment on the same frozen set
     uv run python scripts/run_evaluation.py --split all --arm gitleaks_only --source combined \
         --candidates-cache data/processed/all_combined.candidates.json
     uv run python scripts/run_evaluation.py --split all --arm single --treatment masked \
@@ -74,33 +60,22 @@ from credhunter_x.trufflehog.runner import run_trufflehog
 CREDDATA_ROOT = Path("data/creddata_raw/CredData")
 RESULTS_DIR = Path("results")
 
-# Bumped whenever Candidate's fields change, so an old cache is rejected
-# rather than blowing up inside Candidate(**row).
+# Change this when Candidate's fields change, so an old cache is rejected.
 _CACHE_FORMAT = 1
 
 
 def _cache_key(source: str) -> dict[str, object]:
-    """What a cached candidate set is valid for. Reusing a gitleaks-only
-    cache on a --source combined run would score the wrong candidate set
-    without any visible sign, so the key is checked on load."""
+    """What a cached candidate set is valid for. Checked on load, so a
+    gitleaks-only cache can't be used by mistake for a combined run."""
     return {"format": _CACHE_FORMAT, "source": source, "corpus": str(CREDDATA_ROOT)}
 
 
 def _load_candidates_cache(path: Path, source: str) -> list[Candidate]:
-    """Loads a frozen candidate set instead of re-running the detectors.
+    """Loads a frozen candidate set instead of running the detectors again.
 
-    Why this exists: the detectors are re-run on every invocation, and
-    trufflehog3 emits its findings in a different order each time (it scans
-    in parallel). merge_candidates absorbs the FIRST trufflehog finding that
-    matches a given gitleaks one, and a multi-line private key legitimately
-    matches many of them -- so a different one survives each run. The
-    candidate count is stable; which candidates they are is not. Measured
-    across two --split all runs: 6 of 517 differed.
-
-    That is harmless for a single run, but RQ4 compares treatments to each
-    other, and "what does masking cost?" only means something if every
-    treatment judged the same candidates. Freezing the set makes that
-    guarantee explicit rather than hoping the scan repeats itself."""
+    trufflehog3 reports findings in a different order on each run, so the merged
+    set can differ slightly between scans. Freezing it means every arm and
+    treatment scores exactly the same candidates."""
     payload = json.loads(path.read_text(encoding="utf-8"))
     if payload.get("key") != _cache_key(source):
         raise SystemExit(
@@ -112,8 +87,8 @@ def _load_candidates_cache(path: Path, source: str) -> list[Candidate]:
 
 
 def _save_candidates_cache(path: Path, source: str, candidates: list[Candidate]) -> None:
-    """Holds real secret values (matched_value, matched_lines, context) --
-    keep it gitignored and never ship it."""
+    """Contains real secret values (matched_value, matched_lines, context).
+    Keep it gitignored and never share it."""
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "key": _cache_key(source),
@@ -139,14 +114,10 @@ def _select_candidates(candidates: list[Candidate], repo_ids: set[str]) -> list[
 
 
 def _generate_candidates(source: str) -> list[Candidate]:
-    """Runs the requested detector(s) over the full materialized CredData
-    corpus. "combined" runs both independently, then merges out any secret
-    both flag so it's counted -- and sent to the LLM -- once, not twice.
-
-    Both parsers are pointed at CREDDATA_ROOT (all 71 repos at once, not
-    one repo at a time), so neither has a single repo_id to stamp on its
-    candidates -- it's derived here from each candidate's own file_path
-    instead, same convention as _repo_id_of/_select_candidates below."""
+    """Runs the chosen detector(s) over the whole CredData corpus. "combined"
+    runs both and merges findings of the same secret, so it is counted and sent
+    to the LLM once. repo_id is taken from each file path, because both scanners
+    are run over all 71 repos at once."""
     gitleaks_candidates: list[Candidate] = []
     trufflehog_candidates: list[Candidate] = []
 
@@ -157,11 +128,8 @@ def _generate_candidates(source: str) -> list[Candidate]:
 
     if source in ("trufflehog", "combined"):
         print("Running trufflehog3 against the full materialized corpus...", flush=True)
-        # .py-only: a single pathological non-Python file elsewhere in the
-        # corpus is known to crash trufflehog3's own entropy scan (see
-        # run_trufflehog's include_extensions docstring), and every
-        # candidate outside a .py file gets discarded by _select_candidates
-        # below regardless.
+        # Only .py files: non-Python candidates are dropped anyway, and one
+        # non-Python file in the corpus crashes trufflehog3's entropy scan.
         findings = run_trufflehog(CREDDATA_ROOT, include_extensions=(".py",))
         trufflehog_candidates = parse_trufflehog_report(findings, CREDDATA_ROOT)
 
@@ -207,10 +175,8 @@ def _write_results(
     gt_rows: list[GroundTruthRow],
     report: MetricReport,
 ) -> None:
-    """Persists a run's full per-candidate output plus its summary metrics
-    to results/, gitignored (raw treatment's explanations can quote real
-    secret values verbatim, same as they do on stdout -- inherent to raw
-    treatment, not new exposure here)."""
+    """Writes a run's per-candidate output and summary metrics to results/,
+    which is gitignored (raw explanations can quote real secret values)."""
     RESULTS_DIR.mkdir(exist_ok=True)
     stem = result_stem(arm=arm, treatment=treatment, split=split, source=source, model=model)
     gt_index = index_ground_truth(gt_rows)
@@ -226,8 +192,7 @@ def _write_results(
                 "line_end": c.line_end,
                 "rule_id": c.rule_id,
                 "real_secret_length": len(c.matched_value),
-                # Which scanner found it. Older result files predate this
-                # field, so read it with .get() or guard for its absence.
+                # Which scanner found it (not present in older result files).
                 "source": c.source,
                 "ground_truth_outcome": match_candidate(c, gt_index).value,
                 "label": cl.label.value,
@@ -294,11 +259,9 @@ def _write_detector_results(
     gt_rows: list[GroundTruthRow],
     report: MetricReport,
 ) -> None:
-    """Persists a detector-only baseline (gitleaks, trufflehog, or their
-    merged combination) the same way _write_results does for the LLM arms,
-    so every arm has a comparable results/ file. No classification fields
-    here — a scanner alone has no label/confidence/explanation, just a
-    flagged file+line."""
+    """Writes a detector-only baseline in the same format as _write_results,
+    so every arm has a comparable results/ file. There are no label,
+    confidence or explanation fields, only the flagged file and line."""
     RESULTS_DIR.mkdir(exist_ok=True)
     stem = f"{arm_name}_raw_{split}"
     gt_index = index_ground_truth(gt_rows)
@@ -321,8 +284,8 @@ def _write_detector_results(
         "arm": arm_name,
         "treatment": "raw",
         "split": split,
-        # arm_name already carries the source ("combined_only"), but record
-        # it as its own field so every summary is queryable the same way.
+        # arm_name already includes the source, but store it as its own field
+        # so every summary can be queried the same way.
         "source": arm_name.removesuffix("_only"),
         "generated_at": datetime.now(UTC).isoformat(),
         "n_candidates_evaluated": len(candidates),
@@ -362,18 +325,13 @@ def _run_llm_arm(
     source_label: str,
     delay_seconds: float,
 ) -> tuple[MetricReport, MetricReport]:
-    """Returns (detector_only_report, llm_report), both computed over the
-    same surviving candidate set so McNemar pairing stays valid even when
-    the guard blocks a candidate at runtime.
+    """Returns (detector_only_report, llm_report), both over the same
+    surviving candidates so the McNemar pairing stays valid if the guard blocks
+    a candidate during the run.
 
-    Excluded candidates can't be known in advance: whether a call trips the
-    guard on a real-but-harmless byte overlap (e.g. a certificate/public
-    key sharing key material with its own private key) depends on whether
-    Arm B's model happens to call a tool that pulls in that overlapping
-    content from outside the candidate's fixed context window -- so the
-    survivor set is only known after classify_candidates() returns, not
-    filterable up front. See classify_candidates' skip_candidate_on_error
-    docstring for what does and doesn't change about the guard itself."""
+    Which candidates get blocked can't be known in advance: it depends on
+    whether Arm B's model pulls in overlapping content through a tool call
+    (for example a certificate that shares bytes with its private key)."""
     gt_index = index_ground_truth(gt_rows)
     total_true_count = sum(1 for r in gt_rows if r.ground_truth)
 
@@ -385,11 +343,8 @@ def _run_llm_arm(
         f"Calling the LLM for {len(candidates)} candidates (this costs real API quota)...",
         flush=True,
     )
-    # Pacing is a per-provider concern, so it's a flag rather than a
-    # constant: the 8s that a free tier needed costs over an hour of pure
-    # sleeping across a 517-candidate run on a paid endpoint. LiteLLMClient
-    # already retries rate limits with exponential backoff, so this only
-    # reduces how often that has to fire -- see --delay-seconds.
+    # Optional pause between calls to stay under provider rate limits;
+    # LiteLLMClient also retries rate-limit errors with backoff.
     scan_results = classify_candidates(
         candidates,
         settings=settings,
@@ -416,10 +371,8 @@ def _run_llm_arm(
         survived_candidates, gt_rows, arm_name=source_label
     )
 
-    # Only a TRUE_SECRET verdict means the pipeline would surface this candidate
-    # to a user at all -- FALSE_POSITIVE/UNCERTAIN verdicts mean it suppresses
-    # the candidate, so it's excluded from precision's numerator/denominator,
-    # same as a scanner that never generated a candidate here in the first place.
+    # Only a true_secret verdict is shown to the user. Other verdicts suppress
+    # the candidate, so it counts like one the scanner never produced.
     outcomes = []
     correct = []
     all_outcomes = []

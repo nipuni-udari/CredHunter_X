@@ -117,8 +117,8 @@ def test_one_detector_reporting_the_same_secret_twice_collapses():
 
 
 def test_one_candidate_absorbs_every_matching_secondary():
-    """One value trips several trufflehog rules at once; pairing them off one
-    at a time used to leave the surplus behind as separate candidates."""
+    """One value trips several trufflehog rules; all of them merge into one
+    candidate."""
     gitleaks = [_make_candidate(id="g1", matched_value="ghp_wWPw5k4aXcaT4fNP0UcnZwJUVFk6LO0")]
     trufflehog = [
         _make_candidate(id="t1", matched_value="wWPw5k4aXcaT4fNP0UcnZwJUVFk6LO0", source="th"),

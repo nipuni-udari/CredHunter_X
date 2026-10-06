@@ -61,10 +61,9 @@ def test_build_html_report_includes_all_three_labels():
 
 
 def test_build_html_report_escapes_script_tags_in_model_generated_text():
-    """explanation/remediation are LLM-generated free text over untrusted
-    repo content -- must never be interpolated into the report unescaped,
-    or a crafted comment/string in a scanned repo could inject a script
-    into a report a developer opens in a browser."""
+    """explanation and remediation are LLM text about untrusted repo content.
+    They must be escaped, or a crafted string in a scanned repo could inject a
+    script into the report."""
     payload = "<script>alert(1)</script>"
     results = [_scan_result(label=Label.TRUE_SECRET, explanation=payload)]
 

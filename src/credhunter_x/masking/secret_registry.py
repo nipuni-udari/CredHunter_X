@@ -6,58 +6,41 @@ from urllib.parse import unquote
 
 from credhunter_x.models.candidate import Candidate
 
-# 8 was short enough to collide with unrelated boilerplate by chance; 16
-# consecutive matching characters isn't. Shorter values are still matched
-# whole.
+# 16 characters is long enough not to match unrelated text by chance.
+# Shorter values are matched whole.
 _FRAGMENT_LEN = 16
 _PEM_MARKER_RE = re.compile(r"^-----(BEGIN|END) [^-]+-----$")
 
-# A scanner's matched value isn't always all-secret. gitleaks'
-# password-in-url rule reports the WHOLE url -- scheme, host and path
-# included -- so the credential inside it is only a few of those
-# characters. Registering just the url means a file that also asserts the
-# bare password on its own line ("assert cfg['passwd'] == 'pwd%23%20'")
-# leaks it: no FRAGMENT_LEN-character window of the full url equals that
-# short password, so neither masking nor the guard ever sees it. The same
-# shape occurs in connection strings, .env pairs, JSON blobs and query
-# strings, so the split below is by delimiter, not by url grammar.
+# A matched value isn't always all secret: password-in-url reports the
+# whole url, while the credential is only part of it. The split below is by
+# delimiter, so it also covers connection strings, .env pairs, JSON and query
+# strings.
 _URL_CREDENTIAL_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.\-]*://(?P<cred>[^/@\s]*)@")
 _KEY_VALUE_RE = re.compile(
     r"""["']?(?P<name>[A-Za-z_][A-Za-z0-9_.\-]*)["']?\s*[:=]\s*["']?(?P<value>[^"'&;,\s]+)"""
 )
 _SECRET_NAME_RE = re.compile(r"pass|pwd|secret|token|key|credential|auth|sig", re.I)
-# Field separators shared by every credential-bearing format we see. "." is
-# deliberately absent: it splits hostnames and version numbers, and the
-# formats that use it (JWT) have segments long enough to be covered anyway.
+# Field separators common to credential formats. "." is left out because
+# it splits hostnames and version numbers.
 _COMPONENT_DELIMITERS = re.compile(r"""[:@/;=&?,|\\<>\s"']+""")
-# A bare word or digit run this short is as likely to be an identifier as a
-# password. "_" and "." are excluded from what counts as a distinguishing
-# symbol: they are identifier and hostname punctuation, so treating them as
-# secret-ish registers names like "client_secret", "DB_PASSWORD" and
-# "api.io" and blanks those wherever they appear in the code.
+# A short bare word or number could just as well be an identifier. "_" and
+# "." don't count as symbols, or names like "client_secret" would be masked.
 _STRONG_SYMBOL_RE = re.compile(r"[^A-Za-z0-9_.]")
 _MIN_ALNUM_COMPONENT_LEN = 8
 _MIN_SYMBOLIC_COMPONENT_LEN = 4
-# Where the format tells us a token IS the credential (a url's password
-# field, or a value whose key is named "password"/"secret"/...), it is far
-# more likely to be that password than a stray identifier, so the bar drops
-# to length alone -- the purely-alphabetic exclusion below still applies.
+# When the format says a token is the credential (a url password, or the
+# value of a key like "password"), length alone is enough, though purely
+# alphabetic tokens are still excluded.
 _MIN_KNOWN_CREDENTIAL_LEN = 4
 
 
 def _is_distinctive_enough(component: str, *, known_credential: bool = False) -> bool:
-    """Is `component` specific enough to blank everywhere it appears?
+    """Is component specific enough to blank everywhere it appears?
 
-    This is the whole risk of registering sub-values: masking is global
-    within the window, so registering a password of "admin" or "test"
-    would blank those words wherever they occur and destroy the variable
-    names and file context the classifier judges from. A purely alphabetic
-    token is therefore never registered below _FRAGMENT_LEN, however
-    confident we are that it's the password -- "_hide_password" is a real
-    function name in the corpus, and losing it costs the classifier more
-    than the word itself is worth. Identifier-shaped tokens (letters,
-    digits, "_" and "." only) are held to the same standard unless the
-    format positively identifies them as the credential."""
+    Masking is global within the window, so registering "admin" or "test" would
+    blank those words everywhere and hide the context the classifier needs.
+    Purely alphabetic tokens shorter than _FRAGMENT_LEN are never registered,
+    and identifier-like tokens only when the format marks them as the credential."""
     if len(component) >= _FRAGMENT_LEN:
         return True
     if component.isalpha():
@@ -72,19 +55,17 @@ def _is_distinctive_enough(component: str, *, known_credential: bool = False) ->
 
 
 def _forms_of(token: str) -> set[str]:
-    """`token` plus its percent-decoded form -- a file hardcoding an
-    encoded password commonly asserts the decoded one a line or two later,
-    and the decoded form is not a substring of the encoded value, so
-    nothing else would ever catch it."""
+    """token plus its percent-decoded form (Berners-Lee et al., 2005). A file
+    often asserts the decoded password a line later, and that form isn't a
+    substring of the encoded value."""
     forms = {token, unquote(token)}
     return {stripped for stripped in (form.strip() for form in forms) if stripped}
 
 
 def _known_credentials(value: str) -> set[str]:
-    """Substrings the format positively identifies as the credential: a
-    url's password field, and any key=value / "key": "value" pair whose key
-    is named like a secret. Covers connection strings, .env lines, JSON
-    blobs and query strings without needing a parser for each."""
+    """Substrings the format marks as the credential: a url's password, and
+    the value of any key=value or "key": "value" pair whose key looks like a
+    secret name."""
     found: set[str] = set()
 
     url_match = _URL_CREDENTIAL_RE.match(value.strip().strip("\"'"))
@@ -101,20 +82,13 @@ def _known_credentials(value: str) -> set[str]:
 
 
 def secret_components(value: str) -> set[str]:
-    """The genuinely-secret parts *inside* a scanner's matched value, to be
-    registered as secrets in their own right alongside the whole value.
+    """The secret parts inside a scanner's matched value, registered as
+    secrets alongside the whole value.
 
-    A scanner reports one blob -- a whole url, a whole connection string --
-    but the credential inside it can be far shorter than FRAGMENT_LEN, and
-    no FRAGMENT_LEN-character window of the blob ever equals it. A file
-    that also uses that bare credential on its own line therefore leaked it
-    past both masking and the guard, which share that granularity.
-    Registering the component closes the hole without weakening
-    _FRAGMENT_LEN globally.
-
-    Two tiers, because confidence differs: tokens the format identifies as
-    the credential clear a lower bar than tokens that merely fell out of a
-    delimiter split."""
+    A credential inside a url or connection string can be shorter than
+    FRAGMENT_LEN, so no fragment of the whole value matches it. Registering it
+    separately closes that gap without changing _FRAGMENT_LEN. Tokens the format
+    identifies get a lower bar than tokens from a plain split."""
     components: set[str] = set()
 
     for token in _known_credentials(value):
@@ -127,30 +101,24 @@ def secret_components(value: str) -> set[str]:
             if _is_distinctive_enough(form):
                 components.add(form)
 
-    # A component that's both long enough to be a fragment and a literal
-    # substring of the parent is already covered by the parent's own
-    # fragments. Dropping those keeps a multi-line PEM key from adding one
-    # near-duplicate fragment set per base64 line.
+    # A component that is long enough and already a substring of the parent
+    # is covered by the parent's fragments, so skip it (this stops a PEM key
+    # adding a near-duplicate set per line).
     return {c for c in components if len(c) < _FRAGMENT_LEN or c not in value}
 
 
 def _strip_pem_boilerplate(value: str) -> str:
-    """PEM header/footer lines are public format text, not secret
-    material -- left in fragments(), they'd trip the guard on content
-    that was never sensitive. Stripped only here; value_for() still
-    returns the full original value."""
+    """PEM header and footer lines are public text, so they are left out of
+    fragments(). value_for() still returns the full value."""
     lines = value.split("\n")
     kept = [line for line in lines if not _PEM_MARKER_RE.match(line.strip())]
     return "\n".join(kept)
 
 
 def fragments_of(value: str) -> set[str]:
-    """All contiguous FRAGMENT_LEN-character substrings of `value`'s
-    non-boilerplate content -- shorter values are matched whole. Shared
-    by SecretRegistry.fragments() (what LeakGuard checks payloads
-    against) and masker.py's window-scrub, so both operate at the exact
-    same granularity -- masking can't leave behind a partial repeat the
-    guard would still object to."""
+    """All FRAGMENT_LEN-character substrings of value, without PEM
+    boilerplate; shorter values are returned whole. Used by both the guard and
+    the masker so they work at the same granularity."""
     stripped = _strip_pem_boilerplate(value)
     if not stripped:
         return set()
@@ -161,10 +129,9 @@ def fragments_of(value: str) -> set[str]:
 
 @dataclass
 class SecretRegistry:
-    """Holds every known real secret value across a batch, not just the
-    current candidate -- the guard checks payloads against all of it.
-    Keyed by candidate id so raw-mode permit can look up which value a
-    specific candidate owns."""
+    """Holds every known secret in a batch, not just the current candidate,
+    keyed by candidate id so the raw-mode permit can find a candidate's own
+    value."""
 
     _values_by_candidate: dict[str, str] = field(default_factory=dict)
     _components_by_candidate: dict[str, set[str]] = field(default_factory=dict)
@@ -182,23 +149,17 @@ class SecretRegistry:
         return self._values_by_candidate.get(candidate_id)
 
     def values_for(self, candidate_id: str) -> set[str]:
-        """Every secret string belonging to this candidate -- its whole
-        matched value plus any credential component extracted from it (see
-        secret_components). Raw treatment permits a candidate's own secret,
-        and a component is just as much "its own" as the full value: a
-        decoded password is not a substring of the encoded url it came
-        from, so permitting only the full value would make the guard block
-        raw calls over the candidate's own secret."""
+        """Every secret string of this candidate: the whole value plus any
+        components (see secret_components). Raw treatment permits all of them, since
+        a decoded password isn't a substring of its encoded url."""
         value = self._values_by_candidate.get(candidate_id)
         if value is None:
             return set()
         return {value} | self._components_by_candidate.get(candidate_id, set())
 
     def fragments(self) -> set[str]:
-        """All contiguous FRAGMENT_LEN-character substrings of every
-        registered value's non-boilerplate content, plus the same for each
-        registered credential component. Shorter values are registered
-        whole."""
+        """All FRAGMENT_LEN-character substrings of every registered value and
+        component, without PEM boilerplate. Shorter values are kept whole."""
         result: set[str] = set()
         for candidate_id, value in self._values_by_candidate.items():
             result |= fragments_of(value)

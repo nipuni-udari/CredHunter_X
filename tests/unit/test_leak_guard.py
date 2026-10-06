@@ -24,12 +24,8 @@ def test_raises_when_full_secret_appears_in_payload():
 
 
 def test_raises_when_only_a_partial_fragment_appears_in_payload():
-    """Adversarial case: even a partial leak must be caught — 16 contiguous
-    characters of a real secret is already enough to meaningfully narrow it
-    down, so a fragment match is treated exactly as seriously as a full one.
-    (Fragment length is 16, not 8: 8 was short enough to coincidentally
-    collide with unrelated short boilerplate/dummy text across candidates —
-    see secret_registry.py's _FRAGMENT_LEN.)"""
+    """A partial leak is caught too: 16 characters of a secret are enough to
+    narrow it down."""
     guard = make_guard({"c1": GITHUB_SECRET})
     sneaky_payload = "some text ...Pw5k4aXcaT4fNP0U... more text, nothing to see here"
     assert "Pw5k4aXcaT4fNP0U" in GITHUB_SECRET  # sanity check on the test itself
@@ -58,9 +54,8 @@ def test_raw_permit_allows_only_that_candidates_own_value():
 
 
 def test_raw_permit_does_not_excuse_a_different_candidates_secret():
-    """The named-permit escape hatch must be scoped to exactly one
-    candidate — a raw-mode call for c1 must still trip if c2's secret has
-    leaked into the same context window."""
+    """The permit covers exactly one candidate: a raw call for c1 must still
+    fail if c2's secret is in the window."""
     guard = make_guard({"c1": GITHUB_SECRET, "c2": SLACK_SECRET})
     payload = f"sending: {GITHUB_SECRET} and also accidentally: {SLACK_SECRET}"
     with pytest.raises(LeakError):
@@ -77,9 +72,8 @@ def test_raw_permit_for_wrong_candidate_id_does_not_excuse_anything():
         )
 
 
-# A modulus long enough to exceed _FRAGMENT_LEN (16), reused verbatim inside
-# both a "private key" and its paired "public key"/"certificate" below —
-# standing in for the real cryptographic overlap between a key pair.
+# A modulus longer than _FRAGMENT_LEN, reused in a private key and its
+# public key/certificate, standing in for the overlap in a real key pair.
 _SHARED_MODULUS = "Xk29fQpL7mZs4Wn8Rt5Vc3Yb6Hj1Gd0AeKf7Nq2Ms9Pw4Tz"
 
 
@@ -103,9 +97,8 @@ def test_fragment_inside_a_public_key_variant_block_is_excused():
 
 
 def test_fragment_outside_any_safe_block_still_trips_even_with_a_safe_block_present():
-    """A payload can contain a legitimate certificate AND, separately, a raw
-    leak elsewhere — the presence of one safe block must not blanket-excuse
-    the whole payload."""
+    """A payload can hold a real certificate and, elsewhere, a leak. The safe
+    block must not excuse the whole payload."""
     guard = make_guard({"c1": _PRIVATE_KEY_PEM})
     payload = _pem_block("CERTIFICATE") + f"\noops, leaked again: {_SHARED_MODULUS}"
     with pytest.raises(LeakError):
@@ -113,10 +106,8 @@ def test_fragment_outside_any_safe_block_still_trips_even_with_a_safe_block_pres
 
 
 def test_a_second_private_key_sharing_fragments_still_trips_the_guard():
-    """The core safety boundary: a block that is ITSELF labeled a private
-    key is never excused, even though it superficially looks like the same
-    "paired key material" pattern — this is the real duplicate-leak
-    scenario the guard exists to catch."""
+    """A block labelled as a private key is never excused, even if it looks
+    like paired key material. That is the leak the guard is for."""
     guard = make_guard({"c1": _PRIVATE_KEY_PEM})
     payload = _pem_block("RSA PRIVATE KEY", f"{_SHARED_MODULUS}\nOtherExtra")
     with pytest.raises(LeakError):
@@ -124,9 +115,8 @@ def test_a_second_private_key_sharing_fragments_still_trips_the_guard():
 
 
 def test_mismatched_begin_end_pem_markers_are_not_treated_as_a_safe_block():
-    """An unclosed or mismatched "BEGIN PUBLIC KEY" without its own matching
-    END marker must not accidentally create a safe span that swallows
-    unrelated trailing content."""
+    """A BEGIN PUBLIC KEY with no matching END must not create a safe span
+    that swallows the rest of the payload."""
     guard = make_guard({"c1": _PRIVATE_KEY_PEM})
     mismatched = "-----BEGIN PUBLIC KEY-----\nnot the real body\n-----END CERTIFICATE-----"
     payload = f"{mismatched}\n{_SHARED_MODULUS}"

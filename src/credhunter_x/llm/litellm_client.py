@@ -12,25 +12,19 @@ from pydantic import BaseModel
 from credhunter_x.llm.client import LLMResponse, LLMToolResponse, ToolCall
 from credhunter_x.llm.schema import ClassificationSchema
 
-# Silences litellm's noisy "Provider List" debug print (an internal,
-# harmless provider lookup fails for openrouter/* models) -- litellm's own
-# documented flag for it, not an error-handling change.
+# Turns off litellm's "Provider List" debug print for openrouter models,
+# using litellm's documented flag.
 litellm.suppress_debug_info = True
 
 _MAX_ATTEMPTS = 5
 _BASE_DELAY_SECONDS = 1.0
 _MAX_DELAY_SECONDS = 30.0
 _RETRYABLE_ERRORS = (RateLimitError, ServiceUnavailableError, Timeout)
-# A provider occasionally returns a successful response carrying no content
-# at all. That is not an exception, so _call_with_retry never sees it -- see
-# generate(). Kept lower than _MAX_ATTEMPTS since the two nest.
+# Retries for a successful but empty response (see generate()). Lower
+# than _MAX_ATTEMPTS because the two loops nest.
 _MAX_EMPTY_ATTEMPTS = 3
-# Classification JSON and agentic tool calls are both short -- nothing here
-# needs the model's full output ceiling. Left uncapped, litellm requests up
-# to the model's max (65536+ tokens) on every call, which OpenRouter's
-# affordability pre-check reserves against the worst case and rejects
-# outright on a small balance, even though the real response is a few
-# hundred tokens.
+# Answers are short, so cap the output. Uncapped, litellm requests the
+# model's maximum, which some providers refuse on a small balance.
 _MAX_OUTPUT_TOKENS = 2048
 
 
@@ -39,15 +33,13 @@ class LiteLLMClientError(RuntimeError):
 
 
 class LiteLLMClient:
-    """Thin wrapper around litellm.completion() -- the single LLM adapter
-    for the whole project. Switching providers is a config change, never a
-    new adapter file. Never construct this unwrapped; see guarded_client.py.
+    """Thin wrapper around litellm.completion(), the only LLM adapter in the
+    project, so changing provider is a config change. Always wrap it in
+    GuardedLLMClient.
 
-    Rate-limit/service-unavailable/timeout errors are retried with backoff
-    up to _MAX_ATTEMPTS; everything else fails immediately.
-
-    reasoning_effort (LLM_REASONING_EFFORT in .env) is forwarded as-is when
-    set; non-reasoning models ignore it, so it's harmless to leave unset."""
+    Rate-limit, unavailable and timeout errors are retried with backoff up to
+    _MAX_ATTEMPTS; other errors fail at once. reasoning_effort is passed on when
+    set and ignored by models that don't support it."""
 
     def __init__(self, model: str, api_key: str, reasoning_effort: str | None = None) -> None:
         if not model or not api_key:
@@ -68,12 +60,8 @@ class LiteLLMClient:
         # guard-only metadata, irrelevant to the raw API call
         del candidate_id, rule_id, raw_permit_candidate_id
         start = time.monotonic()
-        # An empty completion arrives as an ordinary successful response with
-        # no content, so _call_with_retry -- which only catches exceptions --
-        # never sees it. It reaches the caller as unparseable output and the
-        # candidate is dropped from the evaluation entirely. Seen once in a
-        # 517-candidate run; the same candidate classified fine on every
-        # retry, so retry here rather than lose it.
+        # An empty reply is a normal response, so _call_with_retry doesn't catch
+        # it. Retry it here so the candidate isn't lost.
         response: ModelResponse | None = None
         text = ""
         for attempt in range(_MAX_EMPTY_ATTEMPTS):
@@ -109,9 +97,8 @@ class LiteLLMClient:
         # guard-only metadata, irrelevant to the raw API call
         del candidate_id, rule_id, raw_permit_candidate_id
         start = time.monotonic()
-        # No response_format: forced JSON schema + tool-calling isn't
-        # reliable across providers. The prompt asks for schema-matching
-        # JSON in plain language instead once no more tools are needed.
+        # No response_format: a forced JSON schema with tool-calling isn't reliable
+        # across providers, so the prompt asks for the JSON in plain words.
         call_kwargs: dict[str, Any] = {"messages": messages}
         if tools:
             call_kwargs["tools"] = tools

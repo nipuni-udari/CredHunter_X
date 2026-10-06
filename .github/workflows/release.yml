@@ -3,8 +3,8 @@ name: Release
 on:
   push:
     tags: ['v*']
-  # Lets an existing tag get a release page after the fact -- run this
-  # workflow from the Actions tab and give it the tag name.
+  # Gives an existing tag a release page later: run this workflow from the
+  # Actions tab with the tag name.
   workflow_dispatch:
     inputs:
       tag:

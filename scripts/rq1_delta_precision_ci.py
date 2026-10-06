@@ -1,13 +1,6 @@
-"""Paired bootstrap CI on the precision gain over the detector -- H1's
-decision statistic.
-
-metrics.bootstrap_ci gives a CI on one run's precision. H1 asks something
-different: is the DIFFERENCE against the detector reliably above zero? That
-needs a paired resample -- both systems scored on the same drawn candidates,
-so the shared sampling variation cancels.
-
-The scope quotes [+0.013, +0.084] for Arm A; this regenerates that number
-from the stored rows. Read-only, no API calls.
+"""Paired bootstrap CI (Efron, 1979) for the precision gain over the
+detector, the statistic for H1. Both systems are scored on the same
+resampled candidates, so shared sampling noise cancels. Read-only.
 
 Usage:
     uv run python scripts/rq1_delta_precision_ci.py
@@ -23,7 +16,7 @@ from typing import Any
 
 RESULTS = Path("results")
 SEED = 20260903
-DRAWS = 4000  # matches what the status page reports
+DRAWS = 4000  # number of bootstrap resamples
 LOST = "lost"
 
 
@@ -42,14 +35,13 @@ def _precision(pairs: list[tuple[bool, bool]]) -> float:
 
 
 def delta_ci(rows: list[dict[str, Any]]) -> tuple[float, float, float, float, float]:
-    """Returns (detector P, llm P, delta, ci_low, ci_high) over the scored
-    candidates. LOST rows have no ground-truth row at that file:line and are
-    excluded from precision by CredData convention."""
+    """Returns (detector P, LLM P, delta, ci_low, ci_high). LOST rows have no
+    ground-truth row and are left out of precision, as in CredData."""
     scored = [r for r in rows if r["ground_truth_outcome"] != LOST]
     real = [r["ground_truth_outcome"] == "true_positive" for r in scored]
     llm = [r["label"] == "true_secret" for r in scored]
 
-    # The detector flags every candidate it generated -- that is the baseline.
+    # The detector flags every candidate it produced; that is the baseline.
     det_pairs = list(zip(real, [True] * len(real), strict=True))
     llm_pairs = list(zip(real, llm, strict=True))
     det_p, llm_p = _precision(det_pairs), _precision(llm_pairs)

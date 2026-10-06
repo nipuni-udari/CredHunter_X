@@ -40,7 +40,7 @@ def test_lost_outcomes_are_excluded_from_precision_recall_but_still_counted():
     )
     report = compute_metrics(outcomes, total_true_count=4, arm="gitleaks_only", treatment="raw")
 
-    assert report.precision == 0.8  # 4 / (4 + 1) — LOST not in the denominator
+    assert report.precision == 0.8  # 4 / (4 + 1); LOST is not in the denominator
     assert report.recall == 1.0  # 4 / 4
     assert report.n_candidates == 10
     assert report.lost_count == 5
@@ -105,7 +105,7 @@ def test_cohens_kappa_is_one_for_perfect_agreement():
 
 
 def test_cohens_kappa_is_one_for_the_degenerate_single_category_case():
-    # every item shares one category for both raters -- po==pe==1, not 0/0
+    # both raters use one category for every item: po == pe == 1, not 0/0
     assert cohens_kappa(["a", "a", "a"], ["a", "a", "a"]) == 1.0
 
 
@@ -156,8 +156,8 @@ def test_fleiss_kappa_raises_on_empty_input():
 def test_wilson_score_interval_matches_a_known_worked_example():
     lower, upper = wilson_score_interval(80, 100, confidence=0.95)
 
-    # verified independently via the closed-form formula, not transcribed
-    # from memory: z=norm.ppf(0.975)~=1.95996, p_hat=0.8
+    # checked against the closed-form formula: z = norm.ppf(0.975) ~= 1.95996,
+    # p_hat = 0.8
     assert math.isclose(lower, 0.7111708344068411)
     assert math.isclose(upper, 0.8666330666689676)
 
@@ -200,8 +200,8 @@ def test_agreement_vectors_detector_is_correct_exactly_on_true_positives():
 
 
 def test_agreement_vectors_credits_the_llm_for_a_correct_suppression():
-    """The case the old definition can't express: the candidate isn't a
-    real secret, the LLM says so, the detector flagged it anyway."""
+    """The case "flagged and really a secret" can't express: not a secret, the
+    LLM says so, and the detector flagged it anyway."""
     detector, llm = agreement_vectors([MatchOutcome.FALSE_POSITIVE], [False])
     assert detector == [False]
     assert llm == [True]
@@ -219,8 +219,8 @@ def test_agreement_vectors_raises_on_length_mismatch():
 
 
 def test_agreement_mcnemar_can_favour_the_llm_where_the_old_definition_cannot():
-    """Two suppressed false positives, one discarded true positive. Under
-    'flagged AND real' the LLM can only lose; under agreement it wins 2-1."""
+    """Two dismissed false positives and one missed true positive. Under
+    'flagged and real' the LLM can only lose; under agreement it wins 2-1."""
     outcomes = [
         MatchOutcome.FALSE_POSITIVE,
         MatchOutcome.FALSE_POSITIVE,
@@ -232,7 +232,7 @@ def test_agreement_mcnemar_can_favour_the_llm_where_the_old_definition_cannot():
     old_llm = [
         f and o == MatchOutcome.TRUE_POSITIVE for f, o in zip(flagged, outcomes, strict=True)
     ]
-    # the LLM is never right where the detector isn't -- one cell is empty
+    # the LLM is never right where the detector is wrong, so one cell is empty
     assert not any(m and not d for d, m in zip(old_detector, old_llm, strict=True))
     assert sum(old_llm) == 0
 

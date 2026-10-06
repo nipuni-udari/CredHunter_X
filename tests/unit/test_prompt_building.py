@@ -88,8 +88,7 @@ def test_metadata_only_prompt_never_contains_the_real_secret_or_a_length_matched
 
 
 def _same_line_pair():
-    """Two genuinely different secrets sharing one line -- the case that
-    made line-range labelling ambiguous."""
+    """Two different secrets on one line."""
     aws, slack = "AKIAIOSFODNN7EXAMPLE", "xoxb-1234567890-AbCdEfGh"
     line = f'creds = ("{aws}", "{slack}")'
 
@@ -114,18 +113,14 @@ def _same_line_pair():
 
 
 def _span_lines(prompt: str) -> list[str]:
-    """Only the per-span metadata lines. The raw treatment note also uses
-    the phrase "candidate under review", so counting it across the whole
-    prompt would measure the note rather than the labelling."""
+    """Only the per-span metadata lines; the raw treatment note also says
+    "candidate under review"."""
     return [line for line in prompt.splitlines() if line.startswith("Sanitised span")]
 
 
 def test_only_one_span_is_labelled_the_candidate_under_review():
-    """Labelling used to be derived from line ranges, so every secret
-    sharing the target's line was announced as the candidate under review.
-    The model then received several contradictory metadata blocks -- and
-    under the masked treatments that block is the ONLY signal about the
-    hidden value, so it had nothing reliable to judge from."""
+    """Only the target's span is labelled as the candidate under review, even
+    when another secret shares its line."""
     aws, slack = _same_line_pair()
 
     spans = _span_lines(build_classification_prompt(aws, mask_context_window(aws, [slack])))
@@ -136,8 +131,8 @@ def test_only_one_span_is_labelled_the_candidate_under_review():
 
 
 def test_the_review_label_follows_whichever_candidate_is_being_classified():
-    """The two spans are indistinguishable by line range, so this pins that
-    the label tracks candidate identity rather than position."""
+    """The two spans have the same line range, so the label must follow the
+    candidate's identity, not its position."""
     aws, slack = _same_line_pair()
 
     aws_spans = _span_lines(build_classification_prompt(aws, mask_context_window(aws, [slack])))
@@ -151,8 +146,8 @@ def test_the_review_label_follows_whichever_candidate_is_being_classified():
 
 
 def test_raw_treatment_labels_every_span_as_a_neighbour():
-    """Raw shows the target's own value, so it produces no span for the
-    target -- every masked span present really is someone else's secret."""
+    """Raw shows the target's own value and makes no span for it, so every
+    masked span belongs to another secret."""
     aws, slack = _same_line_pair()
 
     spans = _span_lines(build_classification_prompt(aws, build_raw_context(aws, [slack])))

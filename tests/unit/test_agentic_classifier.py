@@ -26,9 +26,8 @@ FAKE_ANSWER_JSON = (
 
 
 class _ScriptedClient:
-    """Returns each entry in `responses` in order, one per call to
-    generate_with_tools. Records every call's messages/tools so tests can
-    inspect exactly what the classifier sent on each turn."""
+    """Returns the given responses in order, one per generate_with_tools
+    call, and records what was sent on each turn."""
 
     def __init__(self, responses: list[LLMToolResponse]) -> None:
         self._responses = list(responses)
@@ -77,11 +76,8 @@ def _tool_call_response(name: str, arguments: dict, call_id: str = "call_1") -> 
 
 
 def test_an_empty_response_with_no_tool_calls_is_retried():
-    """Observed live in Arm B pseudonymised: the model returned no tool
-    calls and no text, which finalised on "" and cost the candidate its
-    place. generate()'s empty-retry cannot help here -- Arm B goes through
-    generate_with_tools, where empty content is normal alongside a tool
-    call, so the recovery has to live in the turn loop."""
+    """No tool calls and no text: the turn loop asks again instead of losing
+    the candidate."""
     candidates = load_candidates()
     github = next(c for c in candidates if c.rule_id == "github-pat")
     client = _ScriptedClient([_final_answer(""), _final_answer()])
@@ -100,9 +96,8 @@ def test_an_empty_response_with_no_tool_calls_is_retried():
 
 
 def test_an_empty_response_on_every_turn_is_still_skipped():
-    """Bounded by the same turn cap: if it never answers, the final turn
-    finalises on "" and raises, so skip_candidate_on_error handles it
-    exactly as before."""
+    """Still bounded by the turn cap: if the model never answers, the last turn
+    raises and skip_candidate_on_error handles it."""
     candidates = load_candidates()
     github = next(c for c in candidates if c.rule_id == "github-pat")
     client = _ScriptedClient([_final_answer("")] * _MAX_TURNS)
@@ -115,7 +110,7 @@ def test_an_empty_response_on_every_turn_is_still_skipped():
 
 
 def test_a_normal_text_answer_still_returns_on_the_first_turn():
-    """Pins that the empty check costs nothing when the model does answer."""
+    """No extra calls when the model does answer."""
     candidates = load_candidates()
     github = next(c for c in candidates if c.rule_id == "github-pat")
     client = _ScriptedClient([_final_answer()])
@@ -129,11 +124,8 @@ def test_a_normal_text_answer_still_returns_on_the_first_turn():
 
 
 def test_a_blank_submission_is_rejected_and_the_model_gets_to_resubmit():
-    """Observed live: the model called submit_classification({}) -- valid
-    JSON, none of the five required fields. That raised straight out of the
-    turn loop and the candidate was dropped from the run, despite three
-    unused turns remaining. It must be told what was wrong and allowed to
-    answer again."""
+    """submit_classification({}) with the required fields missing: the model is
+    told what was wrong and can answer again."""
     candidates = load_candidates()
     github = next(c for c in candidates if c.rule_id == "github-pat")
     client = _ScriptedClient(
@@ -148,7 +140,7 @@ def test_a_blank_submission_is_rejected_and_the_model_gets_to_resubmit():
 
     assert result.label == Label.TRUE_SECRET
     assert result.turns == 2
-    # the retry must say what was missing, not just silently re-ask
+    # the retry message must say what was missing
     tool_messages = [m for m in client.calls[1]["messages"] if m["role"] == "tool"]
     assert len(tool_messages) == 1
     assert "rejected" in tool_messages[0]["content"]
@@ -157,9 +149,7 @@ def test_a_blank_submission_is_rejected_and_the_model_gets_to_resubmit():
 
 
 def test_a_blank_submission_on_every_turn_is_still_skipped():
-    """The retry must not swallow genuinely unusable output -- once the turn
-    cap is reached it raises exactly as before, so skip_candidate_on_error
-    handles it the way it always did."""
+    """Unusable output is still raised once the turn cap is reached."""
     candidates = load_candidates()
     github = next(c for c in candidates if c.rule_id == "github-pat")
     client = _ScriptedClient([_tool_call_response("submit_classification", {})] * _MAX_TURNS)
@@ -172,7 +162,7 @@ def test_a_blank_submission_on_every_turn_is_still_skipped():
 
 
 def test_a_valid_submission_still_returns_on_the_first_turn():
-    """Pins that the try/except costs nothing on the normal path."""
+    """No extra calls on the normal path."""
     candidates = load_candidates()
     github = next(c for c in candidates if c.rule_id == "github-pat")
     client = _ScriptedClient(
@@ -221,8 +211,7 @@ def test_calls_get_gitleaks_rule_then_answers():
     assert result.tool_calls[0].tool_name == "get_gitleaks_rule"
     assert result.tool_calls[0].arguments == {"rule_id": "github-pat"}
 
-    # the second call's message history includes a "tool" role message with
-    # the rule's real description
+    # the second call's history has a "tool" message with the rule's description
     second_call_messages = client.calls[1]["messages"]
     tool_messages = [m for m in second_call_messages if m["role"] == "tool"]
     assert len(tool_messages) == 1
@@ -230,10 +219,9 @@ def test_calls_get_gitleaks_rule_then_answers():
 
 
 def test_search_file_result_is_masked_before_reaching_the_next_turn():
-    """The classic Arm B leak risk: a tool call pulls content from
-    elsewhere in the repo that contains a DIFFERENT candidate's real
-    secret. search_file itself returns raw content -- masking must happen
-    before it's appended to the conversation."""
+    """The main Arm B leak risk: a tool call pulls in text from elsewhere in
+    the repo that holds a different candidate's secret. search_file returns raw
+    text, so it must be masked before it joins the conversation."""
     candidates = load_candidates()
     github = next(c for c in candidates if c.rule_id == "github-pat")
     slack = next(c for c in candidates if c.rule_id == "slack-bot-token")
@@ -293,8 +281,8 @@ def test_unknown_tool_name_is_handled_without_crashing():
 def test_turn_cap_produces_uncertain_when_the_model_never_answers():
     candidates = load_candidates()
     github = next(c for c in candidates if c.rule_id == "github-pat")
-    # every one of the 4 allowed turns keeps calling a tool, even the last
-    # (forced no-tools) turn -- an adversarial/misbehaving-model scenario
+    # every one of the 4 turns calls a tool, even the last one (a
+    # misbehaving model)
     client = _ScriptedClient(
         [_tool_call_response("get_gitleaks_rule", {"rule_id": "github-pat"}) for _ in range(4)]
     )
@@ -309,11 +297,8 @@ def test_turn_cap_produces_uncertain_when_the_model_never_answers():
 
 
 def test_last_turn_gets_a_text_nudge_but_keeps_tools_available():
-    """Withdrawing the tools list on the last turn caused Groq to reject
-    the request outright (verified live: "Tool choice is none, but model
-    called a tool") once earlier turns had used a tool. Tools must stay
-    available on every turn; the last turn instead gets an explicit
-    "answer now" instruction appended to the conversation."""
+    """Tools stay available on every turn; the last turn adds an "answer now"
+    message instead of removing them."""
     candidates = load_candidates()
     github = next(c for c in candidates if c.rule_id == "github-pat")
     client = _ScriptedClient(

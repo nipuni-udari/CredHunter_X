@@ -5,7 +5,7 @@ from collections import Counter
 
 
 def shannon_entropy(value: str) -> float:
-    """Shannon entropy in bits per character. 0.0 for an empty string."""
+    """Shannon entropy (Shannon, 1948) in bits per character; 0.0 for ""."""
     if not value:
         return 0.0
     length = len(value)

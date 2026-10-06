@@ -21,11 +21,9 @@ class RemediationReference:
 
 
 def _element_text(element: object) -> str:
-    """v2 elements are dicts carrying id/description/accepted_phrasings;
-    v1 elements were plain strings. Only `description` reaches the checker
-    -- accepted_phrasings are hints for the human hand-labeller, and
-    feeding them in would turn semantic matching into keyword matching,
-    which the reference file explicitly says they are not."""
+    """v2 elements are dicts with id, description and accepted_phrasings; v1
+    elements were plain strings. Only the description goes to the checker;
+    accepted_phrasings are hints for hand-labelling, not keywords."""
     if isinstance(element, str):
         return element.strip()
     if isinstance(element, dict):
@@ -34,10 +32,9 @@ def _element_text(element: object) -> str:
 
 
 def _element_gate(element: object) -> str | None:
-    """`waived_unless` turns a conditional element into one extra yes/no
-    question. When the gate answers false the element is waived rather
-    than failed -- "revoke the credential" is not a defect in advice that
-    concluded the value was never a credential."""
+    """waived_unless adds one yes/no question. If the answer is no, the element
+    is waived rather than failed: "revoke the credential" isn't needed if the
+    advice concluded it was never a credential."""
     if isinstance(element, dict) and element.get("waived_unless"):
         return str(element["waived_unless"]).strip()
     return None
@@ -46,8 +43,8 @@ def _element_gate(element: object) -> str | None:
 def load_remediation_reference(
     path: Path = Path("remediation_reference.yaml"),
 ) -> dict[str, RemediationReference]:
-    """Loads the reference standard RQ3 scores against. Raises if missing
-    -- no reference means RQ3 can't run, not "zero requirements"."""
+    """Loads the reference standard for RQ3. Raises if the file is missing,
+    because RQ3 can't run without it."""
     if not path.exists():
         raise FileNotFoundError(f"remediation reference not found at {path}")
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}

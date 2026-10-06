@@ -23,8 +23,7 @@ class ElementCheckResult:
     element_present: list[bool]
     pass_rate: float
     raw_model_output: str
-    # Scored and reported, never gating the pass -- the reference file's
-    # own grading_policy.
+    # Scored and reported but never needed for a pass (grading_policy).
     optional_elements: list[str] = field(default_factory=list)
     optional_present: list[bool] = field(default_factory=list)
     # Answers to the waived_unless questions, in required_elements order
@@ -37,9 +36,8 @@ def build_questions(
     optional_elements: Sequence[str] = (),
     required_gates: Sequence[str | None] = (),
 ) -> list[str]:
-    """The checker answers one flat array of booleans, so everything it's
-    asked has to go in one ordered list: required, then optional, then the
-    waived_unless gates. Both ends use this so they can't disagree."""
+    """The checker returns one flat list of booleans, so every question goes in
+    one ordered list: required, optional, then the waived_unless gates."""
     gates = list(required_gates) or [None] * len(required_elements)
     if len(gates) != len(required_elements):
         raise ValueError("required_gates must align 1:1 with required_elements")
@@ -55,9 +53,8 @@ def parse_element_check(
     optional_elements: Sequence[str] = (),
     required_gates: Sequence[str | None] = (),
 ) -> ElementCheckResult:
-    """Mirrors parse_classification, plus one extra check: the schema is
-    positional, so element_present's length must match the number of
-    questions asked."""
+    """Like parse_classification, plus a length check: the answer is
+    positional, so it must have one entry per question."""
     optional = list(optional_elements)
     gates = list(required_gates) or [None] * len(required_elements)
     expected = len(build_questions(required_elements, optional, gates))
@@ -81,8 +78,7 @@ def parse_element_check(
     optional_present = data.element_present[n_required : n_required + len(optional)]
     gate_answers = data.element_present[n_required + len(optional) :]
 
-    # A gated element is satisfied when its gate answers false: the
-    # element is waived, not failed.
+    # A gated element passes when its gate answers false (it is waived).
     answers = iter(gate_answers)
     satisfied = [
         present if gate is None else (present or not next(answers))

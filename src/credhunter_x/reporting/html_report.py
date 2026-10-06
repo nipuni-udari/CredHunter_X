@@ -31,8 +31,8 @@ _ICON_PATH = Path(__file__).parent / "assets" / "icon.png"
 
 
 def _logo() -> str:
-    """Inlined as a data URI so the report stays one file that works offline.
-    A missing icon degrades to no logo rather than a broken image."""
+    """Embeds the icon as a data URI so the report is a single offline file.
+    If the icon is missing, the report just has no logo."""
     if not _ICON_PATH.is_file():
         return ""
     data = base64.b64encode(_ICON_PATH.read_bytes()).decode("ascii")
@@ -119,8 +119,8 @@ h2 { font-size:1.05rem; margin:2.5rem 0 1rem; padding-bottom:.4rem;
 .is-hidden { display:none; }
 """
 
-# Client-side only: the report is one file opened from disk, so filtering has
-# to happen in the page. Tiles stay real anchors and still work without JS.
+# Filtering runs in the page because the report is opened from disk. The
+# tiles are plain links and still work without JavaScript.
 _SCRIPT = """
 const findings = [...document.querySelectorAll('.finding')];
 const state = {label:'', sev:'', rule:'', q:''};
@@ -174,10 +174,9 @@ apply();
 
 
 def build_html_report(results: list[ScanResult]) -> str:
-    """Builds a self-contained developer-facing HTML report. Shows every
-    finding, including dismissed false positives, unlike the SARIF report.
-    Everything interpolated is HTML-escaped -- explanations and file paths
-    both come from untrusted, LLM/repo-generated content."""
+    """Builds a self-contained HTML report for developers. Unlike SARIF it
+    shows every finding, including dismissed false positives. Everything
+    inserted is HTML-escaped, since it comes from the repo or the LLM."""
     counts = {label: 0 for label in Label}
     for result in results:
         counts[result.classification.label] += 1
@@ -212,8 +211,7 @@ def build_html_report(results: list[ScanResult]) -> str:
 
 
 def _build_filters(results: list[ScanResult]) -> str:
-    """Severity chips plus a rule dropdown built from the rules actually
-    present -- offering a filter that matches nothing is just noise."""
+    """Severity chips and a rule dropdown with only the rules present."""
     severities = {r.classification.severity for r in results}
     chips = "".join(
         f'<button class="chip" data-sev="{s}" aria-pressed="false">{escape(s)}</button>'

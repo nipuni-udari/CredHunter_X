@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-# Short, human names for detector rule ids, shared by the SARIF and markdown
-# reporters. Display only -- the classifier's own rule lookup
-# (classifiers/tools/get_gitleaks_rule.py) is deliberately separate, so
-# changing a title here never changes what the model is told.
+# Short readable names for rule ids, used by the SARIF and markdown reports.
+# Display only: the classifier's rule lookup (get_gitleaks_rule.py) is separate.
 _RULE_TITLES: dict[str, str] = {
     "aws-access-token": "AWS access key ID",
     "generic-api-key": "Generic API key or secret",

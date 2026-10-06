@@ -13,12 +13,11 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v3
 
-      # Pinned by tag, not /latest/. The latest release does not contain a
-      # file named for an older version, so /latest/ 404s the day gitleaks
-      # ships a new one -- with no commit here to explain it.
+      # Pinned by tag, not /latest/, which breaks as soon as gitleaks
+      # releases a new version.
       #
       # trufflehog3 gets its own venv: it pins attrs==20.3.0 and jinja2==3.1.4,
-      # which litellm cannot live with. Only its binary needs to be reachable.
+      # which litellm can't use. Only its binary needs to be on PATH.
       - name: Install detectors
         run: |
           set -euo pipefail
@@ -46,7 +45,7 @@ jobs:
       - name: Test
         run: uv run pytest -m "not live" --cov=credhunter_x
 
-      # --redact so a real value could never be printed into a public build
+      # --redact so a real value can never appear in a public build
       # log. .gitleaks.toml allowlists the planted test fixtures.
       - name: Scan repo for secrets
         run: gitleaks detect --source . --no-git --redact -v

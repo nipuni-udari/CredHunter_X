@@ -1,12 +1,7 @@
-"""Scores every true_secret remediation in a results/*.jsonl file against
-remediation_reference.yaml's pre-registered required elements, reporting a
-pass rate (all required elements present) with a Wilson 95% CI per rule
-and overall. Manual, costs real LLM quota — not part of CI.
-
-Nothing to score until remediation_reference.yaml's placeholder
-required_elements are actually filled in (see that file's own header
-comment) — that content is a real methodological step, not this script's
-job to generate.
+"""Scores every true_secret remediation in a results/*.jsonl file against the
+required elements in remediation_reference.yaml. Reports the pass rate (all
+required elements present) with a Wilson 95% CI (Wilson, 1927), per rule and
+overall. Costs LLM quota, so it is run by hand and not in CI.
 
 Usage:
     uv run python scripts/score_remediation_quality.py --arm single --treatment raw --split all
@@ -66,8 +61,8 @@ DENOMINATOR_NOTE = (
 
 
 def _row(result: ElementCheckResult) -> dict[str, object]:
-    """One scored remediation. Shared by the live sidecar and the summary
-    file so the durable copy and the reported copy cannot drift apart."""
+    """One scored remediation. Used by both the live sidecar file and the
+    summary, so the two can't drift apart."""
     return {
         "candidate_id": result.candidate_id,
         "rule_id": result.rule_id,
@@ -83,8 +78,8 @@ def _row(result: ElementCheckResult) -> dict[str, object]:
 
 
 def _open_sidecar(out_path: Path) -> TextIO:
-    """Rows land here as they complete. The summary JSON is written once at
-    the end, so without this a kill at row 400 of 459 loses all 400."""
+    """Rows are appended as they finish, so an interrupted run keeps what it
+    has already scored."""
     path = out_path.with_suffix(".rows.jsonl")
     path.parent.mkdir(parents=True, exist_ok=True)
     print(f"streaming rows to {path}", flush=True)
@@ -100,13 +95,9 @@ def _write_rows(
     blocked: list[str] | None = None,
     failed: list[str] | None = None,
 ) -> None:
-    """One record per scored remediation, plus the run's own settings.
-
-    The checker is an LLM and does not repeat itself exactly, so these
-    verdicts cannot be regenerated -- a reported pass rate is only auditable
-    if the rows behind it were written down at the time. Cohen's kappa also
-    needs the per-row answers to line up against the hand-labels.
-    """
+    """One record per scored remediation, plus the run settings. The checker
+    is an LLM and won't repeat itself exactly, so the verdicts are saved as
+    they happen; Cohen's kappa also needs them row by row."""
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "source_run": stem,
@@ -127,9 +118,8 @@ def _write_rows(
 
 
 def _print_optional_report(results: list[ElementCheckResult]) -> None:
-    """Optional elements are reported, never required to pass -- the
-    reference file's own grading_policy. They carry the finer signal once
-    the required pair saturates."""
+    """Optional elements are reported but never needed for a pass, as the
+    reference file's grading_policy says."""
     tallies: dict[str, list[bool]] = {}
     for result in results:
         for element, present in zip(result.optional_elements, result.optional_present, strict=True):
@@ -211,9 +201,8 @@ def main() -> None:
 
     reference = load_remediation_reference()
 
-    # The frozen candidate set, not a fresh gitleaks scan: re-scanning
-    # would rebuild a registry from gitleaks alone, and every trufflehog
-    # candidate would then fail the id lookup below and be skipped.
+    # Use the frozen candidate set. A fresh gitleaks scan would build the
+    # registry from gitleaks alone and every trufflehog candidate would be skipped.
     if not CANDIDATES_CACHE.exists():
         print(f"missing {CANDIDATES_CACHE} -- build it with run_evaluation.py --candidates-cache")
         return
@@ -262,17 +251,12 @@ def main() -> None:
             skipped += 1
             continue
         except LeakError:
-            # The guard already refused the call -- nothing left the machine.
-            # Dropping the row rather than aborting mirrors the orchestrator's
-            # skip_candidate_on_error, which is why the classification runs
-            # survived the same block. Counted separately from `skipped`
-            # because an unscoreable row is a finding, not a technicality.
+            # The guard refused the call, so skip the row and count it separately.
             print(f"  guard blocked {row['candidate_id']} -- excluded", flush=True)
             blocked.append(row["candidate_id"])
             continue
         except LiteLLMClientError as exc:
-            # Same policy as the orchestrator: a transport failure drops the
-            # row, it does not end a 459-call run.
+            # A transport error skips the row instead of ending the run.
             print(f"  client error on {row['candidate_id']}: {exc}", flush=True)
             failed.append(row["candidate_id"])
             continue
@@ -304,8 +288,7 @@ def main() -> None:
         print("no scoreable remediations -- nothing to report")
         return
 
-    # "pass" = every required element present, matching "remediations match
-    # a pre-registered reference standard" literally, not partial credit.
+    # "pass" means every required element is present; no partial credit.
     by_rule: dict[str, list[bool]] = {}
     for result in results:
         by_rule.setdefault(result.rule_id, []).append(result.pass_rate == 1.0)

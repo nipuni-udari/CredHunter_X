@@ -1,12 +1,8 @@
-"""E2: single-prompt vs multi-step, on one frozen candidate set.
+"""E2: single-prompt against agentic on the same frozen candidate set.
 
-Everything RQ2 asks for, from the stored rows -- paired McNemar, quality
-metrics, token and latency cost, money per 1,000 candidates, and the
-calibration data behind the confidence-vs-correctness figure. No LLM calls.
-
-Prices default to GPT-5.6 Luna's September 2026 rates. They are flags, not
-constants, because the rate dropped 80% five weeks before these runs and
-will move again -- pass the rate that applied, and the JSON records it.
+Paired McNemar, quality metrics, token and latency cost, cost per 1,000
+candidates and the confidence data, all from the stored rows. Prices default
+to GPT-5.6 Luna's September 2026 rates and can be changed with flags.
 
 Usage:
     uv run python scripts/rq2_arm_comparison.py
@@ -38,9 +34,8 @@ def _rows(arm: str, treatment: str, model: str) -> list[dict[str, Any]]:
 
 
 def _agrees(row: dict[str, Any]) -> bool:
-    """Correct = the label matches ground truth. Not "flagged and real" --
-    that definition makes a correctly suppressed false positive count as
-    wrong for both arms; see metrics.agreement_vectors."""
+    """Correct means the label matches ground truth. Using "flagged and real"
+    instead would count a correctly dismissed false positive as wrong."""
     return bool((row["label"] == "true_secret") == (row["ground_truth_outcome"] == "true_positive"))
 
 
@@ -64,16 +59,14 @@ def _mcnemar(a_rows: dict[str, Any], b_rows: dict[str, Any]) -> dict[str, Any]:
 
 
 def _calibration(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    """Confidence split by whether the call was right. If the two
-    distributions sit on top of each other, the score carries no signal."""
+    """Confidence split by whether the answer was right. If the two overlap,
+    the score tells us nothing."""
     scored = [r for r in rows if r["ground_truth_outcome"] != LOST]
     right = [r["confidence"] for r in scored if _agrees(r)]
     wrong = [r["confidence"] for r in scored if not _agrees(r)]
 
-    # LOST rows have no ground-truth entry at that file:line, so a flag on one
-    # cannot be called wrong -- CredData convention keeps them out of
-    # precision, and they are kept out here too. Counting them as wrong (as an
-    # earlier hand-analysis did) inflates the confident-and-wrong count.
+    # LOST rows have no ground-truth entry, so a flag on one can't be called
+    # wrong. They are left out, as they are for precision.
     flagged = [r for r in rows if r["label"] == "true_secret"]
     flagged_scored = [r for r in flagged if r["ground_truth_outcome"] != LOST]
     high = [r for r in flagged_scored if r["confidence"] >= CONFIDENT]
@@ -97,10 +90,8 @@ def _calibration(rows: list[dict[str, Any]]) -> dict[str, Any]:
     mean_right = sum(right) / len(right) if right else 0.0
     mean_wrong = sum(wrong) / len(wrong) if wrong else 0.0
 
-    # Two defensible denominators, so neither is lost. "all scored" uses the
-    # corrected notion of correct (agrees with truth, so a suppressed false
-    # positive counts as right); "flagged only" asks the narrower question --
-    # when it raised an alarm, was it confident about the good ones?
+    # Two denominators: "all scored" counts a dismissed false positive as
+    # correct; "flagged only" asks whether it was confident when it raised an alert.
     f_right = [r["confidence"] for r in flagged if r["ground_truth_outcome"] == "true_positive"]
     f_wrong = [r["confidence"] for r in flagged if r["ground_truth_outcome"] == "false_positive"]
     fm_right = sum(f_right) / len(f_right) if f_right else 0.0

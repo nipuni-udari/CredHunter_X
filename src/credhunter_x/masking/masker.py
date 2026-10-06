@@ -13,13 +13,10 @@ _REDACTED_MARKER = "[REDACTED]"
 
 
 def mask_arbitrary_text(text: str, candidates: list[Candidate]) -> str:
-    """Masks every occurrence of any candidate's real value anywhere in
-    arbitrary text -- for Arm B's tool results, which can pull in content
-    from anywhere in the repo. Matches at the fragment level (same as
-    SecretRegistry.fragments()/LeakGuard), not just a whole-value match --
-    a small tool snippet often only contains part of a multi-line secret
-    like a PEM key. Matching fragments are merged into contiguous spans
-    before replacement so a longer leak is blanked out in full."""
+    """Masks every candidate's value anywhere in arbitrary text, used for Arm
+    B's tool results, which can come from anywhere in the repo. Matches at
+    fragment level, like the guard, because a snippet often holds only part of
+    a secret such as a PEM key. Matches are merged before replacing."""
     registry = SecretRegistry()
     registry.register_candidates(candidates)
     fragments = registry.fragments()
@@ -66,7 +63,7 @@ def _compute_metadata(value: str, type_hint: str) -> SecretMetadata:
 
 
 def mask_value(value: str, type_hint: str = "") -> tuple[str, SecretMetadata]:
-    """Fully masks `value` — no real characters are ever shown."""
+    """Fully masks value; no real characters are shown."""
     return _MASK_CHAR * len(value), _compute_metadata(value, type_hint)
 
 
@@ -77,8 +74,8 @@ def pseudonymise_value(value: str, type_hint: str = "") -> tuple[str, SecretMeta
 
 
 def redact_value(value: str, type_hint: str = "") -> tuple[str, SecretMetadata]:
-    """Replaces `value` with a short fixed marker, no length signal --
-    unlike mask_value's bullet-fill, which reveals length."""
+    """Replaces value with a short fixed marker that, unlike mask_value's
+    bullets, doesn't reveal the length."""
     return _REDACTED_MARKER, _compute_metadata(value, type_hint)
 
 
@@ -96,17 +93,9 @@ def _window_lines(target: Candidate) -> dict[int, str]:
 
 
 def _others_to_scrub(target: Candidate, other_candidates: list[Candidate]) -> list[Candidate]:
-    """Every other known secret in the same file -- deliberately NOT
-    filtered to the window's line range.
-
-    Which secrets to *scrub* and which to *describe* are different
-    questions, and this used to be one line-range filter answering both. A
-    candidate reported at line 500 whose value is also used at line 6 sits
-    squarely inside this window's text while its line number says
-    otherwise, so filtering the scrub by line range sent it to the model
-    unmasked. Scrubbing a value that isn't present is a harmless no-op, so
-    the scrub side can afford to be broad; the metadata side stays narrow
-    by describing only spans that actually replaced something."""
+    """Every other known secret in the same file, not only those inside the
+    window's line range, since a value can also appear away from its reported
+    line. Only spans that actually replaced something get metadata."""
     return [c for c in other_candidates if c.file_path == target.file_path and c.id != target.id]
 
 
@@ -122,14 +111,9 @@ def _redacted_line_fallback(line_text: str) -> str:
 def _scrub_fragments_in_line(
     text: str, fragments: set[str], line_fallback_fn: Callable[[str], str]
 ) -> str:
-    """Blanks every fragment occurrence in `text` in a single pass. Every
-    position is resolved against the original text before anything is
-    replaced: fragments overlap each other by design (they're sliding
-    FRAGMENT_LEN-character windows of one value), so replacing them one at a
-    time mutates the very text the remaining ones still need to match. That
-    strands real secret characters between replacements and makes the result
-    depend on set iteration order, which Python randomises per process. Same
-    coverage-then-merge technique as mask_arbitrary_text."""
+    """Blanks every fragment in text in one pass. Fragments overlap, so all
+    positions are found on the original text and merged before anything is
+    replaced (the same method as mask_arbitrary_text)."""
     covered = bytearray(len(text))
     for fragment in fragments:
         if not fragment:
@@ -167,27 +151,10 @@ def _replace_candidate_in_lines(
     line_fallback_fn: Callable[[str], str],
     is_target: bool = False,
 ) -> MaskedSpan | None:
-    """Replaces every occurrence of candidate's value anywhere in the
-    window, not just its own line range -- the same value can legitimately
-    recur nearby. Falls back to line_fallback_fn over the candidate's own
-    lines if no exact whole-value match is found (e.g. a multi-line
-    value). value_fn/line_fallback_fn are parameterised so each treatment
-    gets its own correct fallback.
-
-    Afterwards, scrubs any remaining FRAGMENT_LEN-character chunk of the
-    value anywhere else in the window (see _scrub_fragments_in_line).
-    LeakGuard checks payloads at that same granularity (see
-    SecretRegistry.fragments()), which is stricter than "the whole value
-    appears verbatim" -- a partial or reformatted repeat the passes above
-    missed would otherwise sail through masking and still trip the guard,
-    silently dropping a legitimate scanner-found candidate from the results
-    (see LeakGuard.check()).
-
-    Returns None when this candidate's secret turned out not to be in the
-    window at all and nothing was touched -- callers pass in every
-    candidate from the file, so "not present here" is the common case and
-    must not produce a metadata block describing a secret the model cannot
-    see."""
+    """Replaces every occurrence of candidate's value in the window, falling back
+    to line_fallback_fn on its own lines when there is no exact match. Any
+    leftover FRAGMENT_LEN piece is then scrubbed, at the guard's granularity.
+    Returns None if the value isn't in the window, so no metadata is made for it."""
     original = dict(lines_by_number)
     placeholder, metadata = value_fn(candidate.matched_value, candidate.rule_id)
     replaced_any = False
@@ -203,10 +170,8 @@ def _replace_candidate_in_lines(
             if line_text is not None:
                 lines_by_number[line_no] = line_fallback_fn(line_text)
 
-    # Credential components are registered as secrets in their own right
-    # (see secret_components), so scrub them at their own granularity --
-    # a 9-character url password is never a FRAGMENT_LEN-character window
-    # of the url it sits inside.
+    # Components (see secret_components) are scrubbed at their own size; a
+    # short url password is never a FRAGMENT_LEN window of the url.
     fragments = fragments_of(candidate.matched_value)
     for component in secret_components(candidate.matched_value):
         fragments |= fragments_of(component)
@@ -234,14 +199,9 @@ def _collect_spans(
     line_fallback_fn: Callable[[str], str],
     target_id: str | None = None,
 ) -> list[MaskedSpan]:
-    """Scrubs each candidate into the shared window and keeps a metadata
-    span only for those that actually replaced something.
-
-    target_id marks which candidate is the one being classified, so the
-    prompt can say so. Matched by id, not by line range: two secrets on the
-    same line share a line range, and raw treatment passes no target here
-    at all (it shows the target's real value, so only neighbours are
-    masked)."""
+    """Scrubs each candidate from the shared window and keeps a metadata span
+    only for those that replaced something. target_id marks the candidate being
+    classified, matched by id because two secrets on one line share a line range."""
     spans = []
     for candidate in candidates:
         span = _replace_candidate_in_lines(
@@ -257,9 +217,8 @@ def _collect_spans(
 
 
 def build_raw_context(target: Candidate, other_candidates: list[Candidate]) -> SanitisedContext:
-    """Unmasked window for target only -- research baseline, never the
-    shipped default. Every other candidate sharing this window is still
-    masked; RAW shows this one value, not everything nearby."""
+    """Unmasked window for target only: a research baseline, never the
+    default. Every other candidate in the window is still masked."""
     lines_by_number = _window_lines(target)
     others = _others_to_scrub(target, other_candidates)
 
@@ -274,9 +233,8 @@ def build_raw_context(target: Candidate, other_candidates: list[Candidate]) -> S
 
 
 def mask_context_window(target: Candidate, other_candidates: list[Candidate]) -> SanitisedContext:
-    """Builds the masked window around `target`, masking every other
-    candidate whose line falls inside it too -- otherwise +/-N lines of
-    context would leak whatever else sits there."""
+    """Builds the masked window around target, also masking any other
+    candidate inside the +/-N lines."""
     lines_by_number = _window_lines(target)
     others = _others_to_scrub(target, other_candidates)
 
@@ -297,11 +255,9 @@ def mask_context_window(target: Candidate, other_candidates: list[Candidate]) ->
 def build_pseudonymised_context(
     target: Candidate, other_candidates: list[Candidate]
 ) -> SanitisedContext:
-    """Same window-scoping as mask_context_window, but every value is
-    replaced with a fake-but-realistic same-shape value -- see
-    pseudonymiser.py. Multi-line values (private keys) fall back to
-    plain bullet-masking instead; synthesising a realistic multi-line PEM
-    block is out of scope."""
+    """Like mask_context_window, but each value is replaced with a realistic
+    fake of the same shape (see pseudonymiser.py). Multi-line values such as
+    private keys fall back to bullet masking."""
     lines_by_number = _window_lines(target)
     others = _others_to_scrub(target, other_candidates)
 
@@ -322,9 +278,8 @@ def build_pseudonymised_context(
 def build_metadata_only_context(
     target: Candidate, other_candidates: list[Candidate]
 ) -> SanitisedContext:
-    """Same window-scoping as mask_context_window, but every value becomes
-    a short fixed marker with no length signal, instead of a length-matched
-    bullet-fill."""
+    """Like mask_context_window, but each value becomes a short fixed marker
+    that doesn't reveal the length."""
     lines_by_number = _window_lines(target)
     others = _others_to_scrub(target, other_candidates)
 

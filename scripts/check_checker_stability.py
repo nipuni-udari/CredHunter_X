@@ -1,15 +1,8 @@
-"""Does the element checker give the same verdict twice? (RQ3 step 3)
+"""Checks whether the element checker gives the same verdict twice (RQ3).
 
-RQ1/RQ2/RQ4 are measured against CredData's fixed labels, so only the model
-under test can wobble. RQ3 has no fixed answer sheet -- an LLM decides
-pass/fail -- so the measuring instrument can move too, and that has to be
-quantified before any pass rate is reported.
-
-Method mirrors check_llm_consistency.py, pointed at the checker instead of
-the classifier: hold the remediation text fixed, ask the same questions N
-times, count how often the verdict changes.
-
-Manual, costs real LLM quota -- not part of CI.
+In RQ3 an LLM decides pass or fail, so the checker itself can vary. This
+asks the same questions about each remediation N times and counts how often
+the verdict changes. Costs LLM quota, so it is run by hand.
 
 Usage:
     uv run python scripts/check_checker_stability.py --arm single --n 30 --repeats 5
@@ -139,9 +132,8 @@ def main() -> None:
                 errors += 1
                 continue
             except LeakError:
-                # Guard already refused the call; drop the row instead of
-                # killing the run. Such a row loses a repeat and is excluded
-                # from the kappa by the completeness filter below.
+                # The guard refused the call, so skip this row. Incomplete items are
+                # left out of the kappa below.
                 print(f"    guard blocked {row['candidate_id']} -- excluded", flush=True)
                 blocked.add(row["candidate_id"])
                 continue
@@ -154,7 +146,7 @@ def main() -> None:
     if len(complete) < 2:
         raise SystemExit("not enough complete rows to measure stability")
 
-    # verdict level -- the number that actually gates a reported pass rate
+    # verdict level: this is what decides a reported pass rate
     flipped = [c for c in complete if len(set(verdicts[c])) > 1]
     d_total = p_total = 0
     for c in complete:
@@ -164,7 +156,7 @@ def main() -> None:
     verdict_flip = d_total / p_total if p_total else 0.0
     kappa = fleiss_kappa([["P" if x else "F" for x in verdicts[c]] for c in complete])
 
-    # element level -- where the instability actually lives
+    # element level: where most of the disagreement is
     el_d = el_p = 0
     unstable_elements: Counter[str] = Counter()
     for c in complete:

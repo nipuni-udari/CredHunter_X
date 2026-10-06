@@ -1,8 +1,8 @@
 title = "CredHunter-X self-scan"
 
-# Config for scanning THIS repository in CI. It does not travel with the
-# shipped tool, and gitleaks only reads it when the directory being scanned
-# is the one holding it -- the pipeline's own scans are unaffected.
+# Config for scanning this repository in CI. It isn't part of the shipped
+# tool, and gitleaks only reads it when scanning this directory, so the
+# pipeline's own scans are unaffected.
 
 [extend]
 useDefault = true

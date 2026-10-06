@@ -1,10 +1,8 @@
-"""One-time script: filter CredData's meta/*.csv annotations down to Python files.
+"""One-off script: filters CredData's meta/*.csv labels down to Python files.
 
-Run after scripts/fetch_creddata.py has populated
-data/creddata_raw/CredData/{data,meta}. Writes
-data/processed/creddata_python_labels.csv, the single flat file every
-evaluation run reads from (see src/credhunter_x/dataset/creddata.py) — this
-script does not need to be re-run unless CredData itself is re-fetched.
+Run after fetch_creddata.py. Writes data/processed/creddata_python_labels.csv,
+which every evaluation run reads. Only needs re-running if CredData is
+fetched again.
 
 Usage:
     uv run python scripts/filter_python_creddata.py
@@ -29,12 +27,8 @@ def load_all_meta() -> pd.DataFrame:
         sys.exit(
             f"No meta/*.csv files found under {META_DIR} — run scripts/fetch_creddata.py first."
         )
-    # dtype=str: several columns (RepoName, FileID) are hex strings that can
-    # coincidentally parse as valid numbers/scientific-notation (e.g. a repo
-    # ID of "55031e17" reads as 5.5031e17) — pandas infers dtype per source
-    # file, and a column that's a single repeated value (RepoName, within
-    # one repo's CSV) is especially prone to this. Forcing str avoids any
-    # numeric misparsing/precision loss across the board.
+    # Read everything as str: hex ids such as RepoName can look like numbers
+    # ("55031e17" parses as 5.5031e17), and pandas guesses types per file.
     frames = [pd.read_csv(f, dtype=str) for f in csv_files]
     return pd.concat(frames, ignore_index=True)
 

@@ -31,8 +31,7 @@ def _sorted(rows: list[ScanResult]) -> list[ScanResult]:
 
 def build_markdown_summary(results: list[ScanResult], *, skipped_count: int = 0) -> str:
     """GitHub-flavoured markdown for $GITHUB_STEP_SUMMARY: what was found and
-    why, but not how to fix it -- the remediation stays in the HTML report,
-    which the summary links to instead of duplicating."""
+    why. The remediation stays in the HTML report, which is linked."""
     by_label: dict[Label, list[ScanResult]] = {label: [] for label in Label}
     for result in results:
         by_label[result.classification.label].append(result)
@@ -96,7 +95,7 @@ def _details(title: str, rows: list[ScanResult]) -> list[str]:
 def write_markdown_summary(
     results: list[ScanResult], path: Path, *, skipped_count: int = 0
 ) -> None:
-    """Appends rather than overwrites -- $GITHUB_STEP_SUMMARY is shared with
-    every other step in the job."""
+    """Appends instead of overwriting, because $GITHUB_STEP_SUMMARY is shared
+    by every step in the job."""
     with path.open("a", encoding="utf-8") as handle:
         handle.write(build_markdown_summary(results, skipped_count=skipped_count))

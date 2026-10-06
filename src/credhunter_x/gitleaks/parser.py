@@ -12,19 +12,15 @@ def parse_gitleaks_report(
     repo_id: str = "",
     context_lines: int = 10,
 ) -> list[Candidate]:
-    """Convert gitleaks' raw JSON findings into Candidate objects.
-    file_path is relative to source_root (POSIX-style), matching CredData's
-    own convention. value_start/value_end come from searching for
-    matched_value in its own line rather than trusting gitleaks'
-    StartColumn/EndColumn, which we've seen be wrong."""
+    """Converts gitleaks' JSON findings into Candidate objects. file_path is
+    relative to source_root, as in CredData. value_start/value_end are found by
+    searching the line, because gitleaks' StartColumn/EndColumn are sometimes
+    wrong."""
     source_root = source_root.resolve()
     file_cache: dict[Path, list[str]] = {}
     candidates = []
-    # gitleaks' own Fingerprint (file:rule:line) isn't always unique -- its
-    # decode-pass can emit a second finding with the same Fingerprint for
-    # the same secret. Without an occurrence index, both would collide on
-    # id and classify_candidates' id-keyed results dict would silently
-    # drop one of the two classifications (the second overwrites the first).
+    # gitleaks' Fingerprint (file:rule:line) isn't always unique, so add an
+    # occurrence index; otherwise two findings share an id and one result is lost.
     occurrence_counts: dict[str, int] = {}
 
     for finding in findings:

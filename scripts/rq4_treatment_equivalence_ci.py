@@ -1,20 +1,9 @@
-"""Paired bootstrap CI on the F1 cost of redaction -- H4's decision statistic.
+"""Paired bootstrap CI for the F1 cost of redaction, the statistic for H4.
 
-H4 asks whether withholding the credential costs less than a margin fixed
-before data collection (5 F1 points). Table 5.9 answers with a point estimate,
-which cannot distinguish "the cost is small" from "we could not have detected
-a cost this size". This bounds it instead.
-
-Both treatments scored the same frozen candidate set, so the resample is
-paired: one draw of candidate indices, both treatments scored on it, and the
-shared sampling variation cancels. Candidates the two treatments agree on
-contribute exactly zero to the delta.
-
-Pairing is by candidate_id, never by position -- agentic_metadata_only has 516
-rows against raw's 517, and a positional zip would silently misalign every row
-after the missing one.
-
-Read-only, no API calls.
+H4 asks whether removing the credential costs less than 5 F1 points. Both
+treatments scored the same candidates, so the resampling is paired, by
+candidate_id rather than position (agentic_metadata_only has 516 rows and
+raw has 517). Read-only, no API calls.
 
 Usage:
     uv run python scripts/rq4_treatment_equivalence_ci.py
@@ -29,11 +18,11 @@ from pathlib import Path
 from typing import Any
 
 RESULTS = Path("results")
-SEED = 20260903  # same seed and draw count as rq1_delta_precision_ci.py
+SEED = 20260903  # same seed and number of draws as rq1_delta_precision_ci.py
 DRAWS = 4000
 LOST = "lost"
 TOTAL_TRUE = 663  # every GroundTruth=='T' row in the Python-filtered corpus
-MARGIN = 0.05  # H4's pre-registered budget: F1 within 5 points of raw
+MARGIN = 0.05  # H4 margin: F1 within 5 points of raw
 SUFFIX = "_all_combined_gpt-5.6-luna"
 
 ARMS = ("single", "agentic")
@@ -53,11 +42,9 @@ def _load(arm: str, treatment: str) -> dict[str, dict[str, Any]]:
 
 
 def _metrics(pairs: list[tuple[bool, bool]]) -> tuple[float, float]:
-    """(corpus F1, candidate F1) for one drawn sample.
-
-    pairs are (is_really_a_secret, the system flagged it), already restricted
-    to scored candidates. Corpus recall divides by the corpus's own 663 true
-    rows; candidate recall divides by the true rows among the candidates."""
+    """(corpus F1, candidate F1) for one bootstrap sample. Corpus recall
+    divides by all 663 true rows in the corpus; candidate recall divides by the
+    true rows among the candidates."""
     tp = sum(1 for real, flagged in pairs if flagged and real)
     fp = sum(1 for real, flagged in pairs if flagged and not real)
     fn = sum(1 for real, flagged in pairs if real and not flagged)
@@ -79,8 +66,8 @@ def compare(arm: str, treatment: str) -> dict[str, Any]:
     shared = sorted(set(raw_rows) & set(red_rows))
     dropped = sorted((set(raw_rows) | set(red_rows)) - set(shared))
 
-    # LOST is a property of the candidate, not of the treatment -- if the two
-    # runs disagree about it, the pairing assumption is broken.
+    # LOST belongs to the candidate, not the treatment. If the two runs
+    # disagree on it, the pairing is broken.
     for cid in shared:
         if (raw_rows[cid]["ground_truth_outcome"] == LOST) != (
             red_rows[cid]["ground_truth_outcome"] == LOST

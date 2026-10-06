@@ -1,29 +1,13 @@
-"""One-time script: clone Samsung/CredData and materialize its Python-relevant
-source files.
+"""One-off script: clones Samsung/CredData (Yun et al., 2021) and builds only
+the repos that contain Python files.
 
-Must run on a native Linux filesystem (WSL is fine) — CredData's own README
-states some original repository filenames it reconstructs while building the
-dataset are invalid on NTFS. Running this from Windows Python, or against a
-/mnt/c/... path even from inside WSL, will fail partway through with
-filesystem errors. Once download_data.py finishes, its output (data/ and
-meta/) is Windows-safe and gets copied into this project's data/ folder.
+Run it inside WSL on a Linux filesystem, not /mnt/c, because some of the
+file names CredData rebuilds aren't valid on NTFS. snapshot.json and meta/
+are trimmed first so only repos with Python rows are cloned. Safe to re-run.
 
-Before running download_data.py (which clones every repo in snapshot.json,
-all languages), this script rewrites snapshot.json down to only the repos
-that have at least one Python-referenced row in meta/*.csv — computed via
-CredData's own short-repo-id scheme (CRC32 of the snapshot key, see
-get_new_repo_id() in their download_data.py) so we never clone a repo with
-zero Python findings in the first place. The same repo set is also used to
-move aside non-Python meta/*.csv files, since download_data.py's own
-obfuscate_creds() step iterates meta/ independently of snapshot.json and
-would otherwise crash looking for files from repos we deliberately skipped.
-
-Usage (from inside WSL):
-    wsl
+Usage (inside WSL):
     cd ~
     python3 /mnt/c/Users/krnan/Desktop/Research/credhunter-x/scripts/fetch_creddata.py
-
-Re-run is safe: an existing clone/output is left alone unless removed first.
 """
 
 from __future__ import annotations
@@ -39,11 +23,11 @@ from pathlib import Path
 
 CREDDATA_REPO = "https://github.com/Samsung/CredData.git"
 
-# Native Linux path (e.g. WSL's ext4 home) — NOT a /mnt/c/... Windows-mounted path.
+# Must be a native Linux path (e.g. the WSL home), not /mnt/c/...
 WORK_DIR = Path.home() / ".cache" / "credhunter-x" / "CredData"
 VENV_DIR = Path.home() / ".cache" / "credhunter-x" / "venv"
 
-# Windows-side project location the final, Windows-safe output is copied to.
+# Where the finished output is copied on the Windows side.
 PROJECT_RAW_DIR = Path(__file__).resolve().parent.parent / "data" / "creddata_raw" / "CredData"
 
 
@@ -78,7 +62,7 @@ def clone_creddata() -> None:
 
 
 def compute_python_repo_ids() -> set[str]:
-    """Meta filenames (= short repo IDs) that have >=1 row referencing a .py file."""
+    """Short repo ids (meta file names) with at least one row for a .py file."""
     ids: set[str] = set()
     for csv_path in (WORK_DIR / "meta").glob("*.csv"):
         with open(csv_path, newline="") as f:
@@ -90,9 +74,8 @@ def compute_python_repo_ids() -> set[str]:
 
 
 def filter_snapshot_to_python_repos(python_repo_ids: set[str]) -> None:
-    """Rewrite snapshot.json in-place to only the repos we actually need, so
-    download_data.py skips cloning everything else. Keeps a backup so this
-    is idempotent across re-runs."""
+    """Rewrites snapshot.json to keep only the repos needed, so download_data.py
+    doesn't clone the rest. A backup is kept, so re-running is safe."""
     snapshot_path = WORK_DIR / "snapshot.json"
     backup_path = WORK_DIR / "snapshot_full.json.bak"
     if not backup_path.exists():
@@ -112,11 +95,9 @@ def filter_snapshot_to_python_repos(python_repo_ids: set[str]) -> None:
 
 
 def filter_meta_to_python_repos(python_repo_ids: set[str]) -> None:
-    """obfuscate_creds() (a step inside download_data.py) iterates every
-    meta/*.csv and expects a matching file under data/ — since we only clone
-    repos with a Python finding, meta/ must be trimmed to match or it
-    crashes on the first excluded repo. Excluded CSVs are moved aside, not
-    deleted, so this is idempotent and reversible."""
+    """Moves the meta CSVs of skipped repos aside. obfuscate_creds() reads
+    every meta/*.csv and would crash on a repo that was never cloned.
+    Files are moved, not deleted, so this can be undone."""
     meta_dir = WORK_DIR / "meta"
     excluded_dir = WORK_DIR / "meta_excluded_backup"
     excluded_dir.mkdir(exist_ok=True)
@@ -130,8 +111,8 @@ def filter_meta_to_python_repos(python_repo_ids: set[str]) -> None:
 
 
 def create_venv() -> Path:
-    """Isolated venv for CredData's own requirements.txt, kept separate from
-    this project's uv-managed venv and from system Python."""
+    """Separate venv for CredData's own requirements, away from this
+    project's environment and the system Python."""
     venv_python = VENV_DIR / "bin" / "python"
     if not venv_python.exists():
         _run([sys.executable, "-m", "venv", str(VENV_DIR)])
@@ -143,9 +124,7 @@ def install_requirements(venv_python: Path) -> None:
 
 
 def run_download_data(venv_python: Path) -> None:
-    # --clean_data: download_data.py refuses to run if data/ already exists
-    # (no built-in resume) — this lets it wipe and rebuild data/ cleanly,
-    # which is what we want on a re-run after an earlier partial failure.
+    # --clean_data lets download_data.py rebuild data/ if it already exists.
     _run([str(venv_python), "download_data.py", "--clean_data"], cwd=WORK_DIR)
 
 

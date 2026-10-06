@@ -41,9 +41,9 @@ class ScanResult:
 
 @dataclass(frozen=True)
 class ScanOutcome:
-    """scan_repository()'s return type -- lets a caller tell "gitleaks
-    found nothing" apart from "found something but couldn't classify it,"
-    so a CI check never reports an incomplete scan as clean."""
+    """Return type of scan_repository(). Tells "nothing found" apart from
+    "found but not classified", so CI never reports an incomplete scan as
+    clean."""
 
     results: list[ScanResult]
     skipped_count: int
@@ -57,18 +57,13 @@ def scan_repository(
     repo_id: str = "",
     skip_candidate_on_error: bool = True,
 ) -> ScanOutcome:
-    """Single wiring point: detectors -> masking -> classifier. This is what
-    the CLI calls; run_evaluation.py calls classify_candidates() directly
-    to reuse one detector pass across treatments. LiteLLMClient/
-    GuardedLLMClient are always constructed together here -- no caller can
-    get an unguarded client.
+    """Single wiring point: detectors, masking, classifier. The CLI calls this;
+    run_evaluation.py calls classify_candidates() directly. The LLM client is
+    always built together with its guard here.
 
-    Both detectors run and merge, matching the evaluated pipeline: gitleaks
-    alone misses the high-entropy family, which trufflehog supplies.
-
-    skip_candidate_on_error defaults True here (unlike classify_candidates'
-    False) since this is the unattended CI path -- one bad model response
-    shouldn't crash the whole scan. Pass False for a hard failure instead."""
+    Both detectors run and are merged, as in the evaluation.
+    skip_candidate_on_error defaults to True because this is the unattended CI
+    path; pass False to fail hard instead."""
     gitleaks_candidates = parse_gitleaks_report(
         run_gitleaks(source, gitleaks_binary=settings.gitleaks_binary_path),
         source,
@@ -99,42 +94,16 @@ def classify_candidates(
     delay_seconds: float = 0.0,
     skip_candidate_on_error: bool = False,
 ) -> list[ScanResult]:
-    """Masking + classification over an already-discovered candidate list
-    -- the shared tail of scan_repository(), factored out so
-    run_evaluation.py can classify a pre-filtered slice without re-running
-    gitleaks.
+    """Masking and classification for candidates already found. Split out of
+    scan_repository() so run_evaluation.py can reuse one detector pass.
 
-    The guard's secret registry holds only the candidate currently being
-    classified, not its neighbours -- a wider registry would raise LeakError
-    (and, with skip_candidate_on_error, silently drop the candidate from
-    the report) whenever one candidate's context happens to contain another
-    candidate's registered value, real secret or not. Two candidates in the
-    same repo can legitimately share a value that isn't even a secret (a
-    hash, a boilerplate test fixture) and dropping either of them from the
-    report over that is wrong -- every gitleaks/trufflehog finding should
-    reach the LLM and show up in the report on its own merits. This only
-    narrows the guard's own blocking check; bystander masking in the
-    context builders and in the agentic classifier's tool-result masking
-    (see AgenticClassifier) is unrelated and still sees every other
-    candidate in the same repo, since that only blanks out text and never
-    causes a candidate to be dropped.
+    The guard's registry holds only the current candidate, so a harmless value
+    shared by two candidates (a hash, say) can't get one of them dropped.
+    Masking of the other candidates still covers the whole repo.
 
-    Results are returned in the same order as `candidates` regardless of
-    internal per-repo grouping.
-
-    delay_seconds paces LLM calls for bulk runs against rate limits
-    (default 0, no effect on a normal single-repo scan).
-
-    skip_candidate_on_error (default False) excludes just the offending
-    candidate instead of aborting the whole batch, for three error types:
-    LeakError (the call still aborted and got logged -- this only decides
-    what happens after, not whether the guard fires), LLMParsingError (a
-    malformed final answer), and LiteLLMClientError (the call itself
-    failed even after litellm_client's own retries -- a timeout, a rate
-    limit that never recovered, an account issue). The latter two are a
-    pure availability trade-off, no safety angle -- without this, one
-    slow or flaky call kills an entire bulk run instead of costing a
-    single candidate."""
+    skip_candidate_on_error (default False) skips only the failing candidate on
+    LeakError, LLMParsingError or LiteLLMClientError. delay_seconds paces calls
+    for bulk runs. Results keep the order of candidates."""
     if not candidates:
         return []
 

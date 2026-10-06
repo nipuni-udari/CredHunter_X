@@ -48,9 +48,8 @@ def test_raises_typed_error_on_invalid_json():
 
 
 def test_raises_typed_error_on_length_mismatch():
-    """The one validation rule with no analogue in parse_classification —
-    the schema is positional, so a wrong-length answer is unusable, not
-    just differently shaped."""
+    """The check parse_classification doesn't need: the answer is positional,
+    so a wrong length can't be used."""
     text = json.dumps({"element_present": [True, False]})  # only 2, expected 3
 
     with pytest.raises(ElementCheckParsingError):

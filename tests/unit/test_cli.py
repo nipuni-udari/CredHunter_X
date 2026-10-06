@@ -16,10 +16,8 @@ runner = CliRunner()
 
 @pytest.fixture(autouse=True)
 def _stub_llm_settings(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The CLI constructs Settings() before scan_repository is patched, so
-    without these the suite passes only on a machine that happens to have a
-    .env -- and fails everywhere else, CI included. Nothing here reaches a
-    provider; every test patches the scan away."""
+    """The CLI builds Settings() before the scan is patched, so without these
+    the tests only pass on a machine with a .env. No provider is called."""
     monkeypatch.setenv("LLM_MODEL", "test/model")
     monkeypatch.setenv("LLM_API_KEY", "test-key")
 
@@ -93,8 +91,8 @@ def test_scan_exits_one_when_a_true_secret_is_found(
 def test_scan_exits_zero_for_uncertain_findings_alone(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):
-    """uncertain means "couldn't decide," not "confirmed" -- it shouldn't
-    fail a CI check by itself, only surface in the report for a human."""
+    """uncertain means "couldn't decide", so it shouldn't fail CI on its own,
+    only show up in the report."""
     _patch_scan_repository(monkeypatch, [_scan_result(Label.UNCERTAIN)])
 
     result = runner.invoke(cli_main.app, [str(tmp_path)])
@@ -136,11 +134,8 @@ def test_scan_writes_reports_even_when_no_candidates_found(
 def test_scan_exits_one_when_a_candidate_was_skipped_even_with_no_true_secret(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):
-    """The exact bug found live in the GitHub Action demo: a candidate that
-    couldn't be classified must never be treated as equivalent to a clean
-    scan, even when every candidate that DID get classified came back
-    false_positive -- an unresolved candidate might have been the real
-    secret."""
+    """An unclassified candidate never counts as clean, even if every other
+    candidate was false_positive."""
     _patch_scan_repository(monkeypatch, [_scan_result(Label.FALSE_POSITIVE)], skipped_count=1)
 
     result = runner.invoke(cli_main.app, [str(tmp_path)])
@@ -153,9 +148,8 @@ def test_scan_exits_one_when_a_candidate_was_skipped_even_with_no_true_secret(
 def test_scan_does_not_print_no_candidates_found_when_some_were_skipped(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):
-    """Distinguishes "gitleaks found nothing" from "gitleaks found
-    something but every candidate errored out" -- the latter must not look
-    identical to a clean scan."""
+    """Tells "found nothing" apart from "found something but every candidate
+    failed"; the second must not look like a clean scan."""
     _patch_scan_repository(monkeypatch, [], skipped_count=2)
 
     result = runner.invoke(cli_main.app, [str(tmp_path)])

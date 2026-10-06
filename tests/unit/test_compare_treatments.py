@@ -45,9 +45,8 @@ def test_discovers_the_only_run_on_disk(tmp_path, monkeypatch: pytest.MonkeyPatc
 def test_ignores_summaries_written_before_source_and_model_were_recorded(
     tmp_path, monkeypatch: pytest.MonkeyPatch
 ):
-    """Older summaries carry a model but no source (and vice versa). Reading
-    one of those keys unconditionally crashed discovery with a KeyError on a
-    real results/ directory -- they must simply be skipped."""
+    """Summaries missing source or model are skipped instead of raising a
+    KeyError."""
     monkeypatch.setattr(compare_treatments, "RESULTS_DIR", tmp_path)
     _write_summary(
         tmp_path,
@@ -69,7 +68,7 @@ def test_ignores_summaries_written_before_source_and_model_were_recorded(
 
 
 def test_refuses_to_guess_when_several_runs_exist(tmp_path, monkeypatch: pytest.MonkeyPatch):
-    """Picking one silently would report a different run's numbers."""
+    """Picking one would report another run's numbers without any warning."""
     monkeypatch.setattr(compare_treatments, "RESULTS_DIR", tmp_path)
     for source, model in (("combined", "openai/gpt-5.6-luna"), ("gitleaks", "gemini/flash")):
         _write_summary(
@@ -100,8 +99,8 @@ def test_exits_clearly_when_nothing_matches(tmp_path, monkeypatch: pytest.Monkey
 def test_other_arms_and_splits_do_not_leak_into_discovery(
     tmp_path, monkeypatch: pytest.MonkeyPatch
 ):
-    """The glob is loose enough to match neighbouring runs, so the arm/split
-    recorded inside each summary is what actually decides."""
+    """The glob can match neighbouring runs, so the arm and split stored in
+    each summary decide."""
     monkeypatch.setattr(compare_treatments, "RESULTS_DIR", tmp_path)
     _write_summary(
         tmp_path,

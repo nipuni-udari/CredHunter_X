@@ -53,10 +53,8 @@ def test_maps_fields_correctly_for_slack_token_finding():
     assert slack.line_start == 2
     assert slack.line_end == 2
     assert slack.matched_value == "xoxb-123456789012-1234567890123-AbCdEfGhIjKlMnOpQrStUvWx"
-    # gitleaks itself reports StartColumn=21, EndColumn=76 for this finding
-    # — EndColumn is actually just the line's total length, not the
-    # secret's real end (verified empirically). The self-derived values
-    # below are the true position, found via exact string search.
+    # gitleaks reports StartColumn=21, EndColumn=76 here, but EndColumn is
+    # just the line length. The values below come from searching the line.
     assert slack.value_start == 19
     assert slack.value_end == 75
     assert slack.matched_lines == [
@@ -71,12 +69,8 @@ def test_empty_findings_list_returns_empty_candidates():
 
 
 def test_two_findings_sharing_a_fingerprint_get_distinct_ids(tmp_path):
-    """The real bug this closes: gitleaks' decode-pass can emit a second
-    finding with the same Fingerprint as the original (same file:rule:line)
-    for what is still the same real secret. Without an occurrence index,
-    both would get the identical id -- and classify_candidates' id-keyed
-    results dict would silently drop one of the two classifications (the
-    second overwrites the first)."""
+    """The same secret reported twice with the same Fingerprint gets two
+    different ids."""
     (tmp_path / "url.py").write_text('URL = "...AKIAEXAMPLE123456789..."\n')
     findings = [
         {

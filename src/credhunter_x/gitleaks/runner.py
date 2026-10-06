@@ -6,7 +6,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-# gitleaks: 0 = no leaks, 1 = leaks found. Both are fine; anything else is a real failure.
+# gitleaks exits 0 for no leaks and 1 for leaks; anything else is an error.
 _OK_EXIT_CODES = {0, 1}
 
 
@@ -15,10 +15,9 @@ class GitleaksError(RuntimeError):
 
 
 def run_gitleaks(source: Path, gitleaks_binary: str = "gitleaks") -> list[dict[str, Any]]:
-    """Scan `source` with gitleaks and return the raw list of finding dicts
-    from its JSON report (empty list if nothing found)."""
-    # Resolve first so gitleaks' "File" field is always absolute, never
-    # ambiguous relative-to-what.
+    """Scans source with gitleaks (Rice, 2026) and returns the finding dicts from
+    its JSON report (an empty list if nothing was found)."""
+    # Resolve first so gitleaks always reports absolute paths.
     source = source.resolve()
 
     with tempfile.TemporaryDirectory() as tmp:

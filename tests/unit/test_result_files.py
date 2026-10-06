@@ -6,9 +6,7 @@ from credhunter_x.evaluation.result_files import filename_slug, result_stem
 
 
 def test_stem_matches_the_names_already_written_to_results():
-    """The naming rule moved out of run_evaluation.py so compare_treatments.py
-    could share it. Existing result files must keep resolving, so this pins
-    the exact names on disk from the completed --split all runs."""
+    """Pins the exact result file names, so existing files still resolve."""
     assert (
         result_stem(
             arm="single",
@@ -47,7 +45,7 @@ def test_stem_carries_all_five_identifying_fields():
     ("model", "expected"),
     [
         ("openai/gpt-5.6-luna", "gpt-5.6-luna"),
-        # nested provider path -- only the trailing segment identifies the model
+        # nested provider path: only the last part names the model
         ("openrouter/google/gemma-4-26b-a4b-it", "gemma-4-26b-a4b-it"),
         ("gemini/gemini-flash-latest", "gemini-flash-latest"),
         # bare model id, no provider prefix

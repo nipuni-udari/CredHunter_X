@@ -60,10 +60,8 @@ def test_no_ground_truth_at_location_is_lost():
 
 
 def test_matches_on_file_and_line_regardless_of_rule_id():
-    """Verified against CredData's real GitLeaks integration
-    (benchmark/scanner/gitleaks.py): it never checks rule/category for
-    GitLeaks findings, only file+line — so a candidate's rule_id must not
-    affect whether it matches."""
+    """CredData's GitLeaks integration (benchmark/scanner/gitleaks.py) only
+    checks file and line, never the rule, so rule_id must not affect matching."""
     candidate = make_candidate(rule_id="github-pat")
     gt_row = make_gt_row(ground_truth=True, category="totally-unrelated-category")
     gt_index = index_ground_truth([gt_row])
@@ -96,9 +94,8 @@ def test_different_file_or_line_is_lost():
 
 
 def test_first_row_at_a_location_wins_when_several_exist():
-    """CredData's own loop returns on the first matching row at a given
-    file+line — index_ground_truth preserves CSV load order, so the first
-    row registered for a key must be the one that decides the outcome."""
+    """CredData returns the first matching row at a file and line, so the
+    first row loaded must decide the outcome."""
     candidate = make_candidate()
     first_row = make_gt_row(row_id="first", ground_truth=True)
     second_row = make_gt_row(row_id="second", ground_truth=False)
@@ -108,11 +105,9 @@ def test_first_row_at_a_location_wins_when_several_exist():
 
 
 def test_offsets_choose_which_of_two_conflicting_rows_applies():
-    """A line commonly carries two labelled items that disagree -- e.g.
-    PublicKey(key_id="568...", key="g0y8X95+...") where the id is labelled
-    not-a-secret and the key is. file+line cannot tell them apart, so the
-    candidate must be scored against the row covering the characters it
-    actually matched, not whichever row loaded first."""
+    """One line often has two labelled items that disagree, e.g. a key id
+    labelled false and a key labelled true. The candidate must be scored
+    against the row covering its own characters."""
     # candidate sits at 57-101, the same characters as the False row
     candidate = make_candidate()
     candidate = replace(candidate, value_start=57, value_end=101)
@@ -128,8 +123,7 @@ def test_offsets_choose_which_of_two_conflicting_rows_applies():
 
 
 def test_offsets_pick_the_true_row_when_that_is_the_one_matched():
-    """The mirror of the test above -- the tie-break must not simply
-    invert the old answer, it must follow the candidate's position."""
+    """The mirror case: the result follows the candidate's position."""
     candidate = replace(make_candidate(), value_start=57, value_end=101)
     not_secret_row = replace(
         make_gt_row(row_id="not-secret", ground_truth=False), value_start=5, value_end=15
@@ -143,9 +137,8 @@ def test_offsets_pick_the_true_row_when_that_is_the_one_matched():
 
 
 def test_falls_back_to_first_row_when_the_candidate_has_no_known_position():
-    """value_start is -1 when the scanner reported a value we could not
-    locate verbatim in its line (12 of 517 in the corpus). An unknown
-    position is not evidence, so behaviour must be exactly as before."""
+    """value_start is -1 when the value couldn't be found in its line; the
+    first row is used."""
     candidate = replace(make_candidate(), value_start=-1, value_end=-1)
     first_row = make_gt_row(row_id="first", ground_truth=True)
     second_row = replace(
@@ -157,9 +150,7 @@ def test_falls_back_to_first_row_when_the_candidate_has_no_known_position():
 
 
 def test_falls_back_to_first_row_when_ground_truth_has_no_offsets():
-    """CredData writes -1 when a row records no offsets; other datasets may
-    omit them entirely. The tie-break must degrade to the old behaviour
-    rather than mis-score."""
+    """Missing offsets (-1 or absent) fall back to the first row."""
     candidate = replace(make_candidate(), value_start=57, value_end=101)
     first_row = replace(
         make_gt_row(row_id="first", ground_truth=True), value_start=-1, value_end=-1
@@ -173,8 +164,7 @@ def test_falls_back_to_first_row_when_ground_truth_has_no_offsets():
 
 
 def test_falls_back_to_first_row_when_no_row_overlaps_the_candidate():
-    """Offsets that simply do not line up (seen on 3 corpus candidates)
-    must not silently pick an unrelated row."""
+    """Offsets that don't line up with any row must not pick an unrelated one."""
     candidate = replace(make_candidate(), value_start=200, value_end=220)
     first_row = make_gt_row(row_id="first", ground_truth=True)
     second_row = replace(
@@ -186,8 +176,8 @@ def test_falls_back_to_first_row_when_no_row_overlaps_the_candidate():
 
 
 def test_adjacent_but_non_overlapping_offsets_do_not_count_as_a_match():
-    """Half-open ranges: a row ending exactly where the candidate begins
-    shares no characters with it."""
+    """Half-open ranges: a row ending where the candidate starts doesn't
+    overlap it."""
     candidate = replace(make_candidate(), value_start=15, value_end=30)
     touching_row = replace(
         make_gt_row(row_id="touching", ground_truth=False), value_start=5, value_end=15

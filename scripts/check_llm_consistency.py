@@ -1,11 +1,7 @@
-"""Repeatedly re-classifies a fixed sample of candidates under masked
-treatment (the shipped default) to measure the model's OWN stability
-across identical, repeated input — RQ3's consistency check. Fully
-automated, needs no human judgement: label/severity agreement across the
-repeats is measured with Fleiss' kappa, and — for candidates that landed
-on true_secret in every repeat and whose rule has a filled-in
-remediation_reference.yaml entry — remediation element-presence agreement
-too. Manual, costs real LLM quota — not part of CI.
+"""Re-classifies a fixed sample several times under the masked treatment to
+see how stable the model is (RQ3). Agreement is measured with Fleiss' kappa
+(Fleiss, 1971) for the labels and, where possible, the remediation elements.
+Costs LLM quota, so it is run by hand.
 
 Usage:
     uv run python scripts/check_llm_consistency.py --arm single --split all --n 10 --repeats 5
@@ -49,11 +45,9 @@ def _element_stability_kappa(
     candidates_by_id: dict[str, Candidate],
     repeats: int,
 ) -> float | None:
-    """For every candidate that landed on true_secret in every repeat and
-    has a non-empty reference entry, scores all `repeats` remediations and
-    treats each repeat's pass/fail as one rater. Returns None if there's
-    nothing scoreable yet (e.g. remediation_reference.yaml is still the
-    placeholder scaffold)."""
+    """Scores the remediations of candidates that were true_secret in every
+    repeat, treating each repeat as one rater. Returns None if nothing can be
+    scored yet."""
     reference = load_remediation_reference()
     registry = SecretRegistry()
     registry.register_candidates(list(candidates_by_id.values()))
@@ -128,9 +122,7 @@ def main() -> None:
     else:
         repo_ids = {r.repo_id for r in dev_rows} | {r.repo_id for r in test_rows}
 
-    # The frozen combined set, not a fresh gitleaks scan: gitleaks alone
-    # yields 87 of the 517 candidates and no high-entropy at all, so a
-    # sample drawn from it would miss the family that dominates the corpus.
+    # Use the frozen candidate set so the sample includes high-entropy candidates.
     if not CANDIDATES_CACHE.exists():
         raise SystemExit(
             f"missing {CANDIDATES_CACHE} -- build it via run_evaluation --candidates-cache"
@@ -201,9 +193,7 @@ def main() -> None:
         )
     )
 
-    # Kappa says how much agreement beats chance. The flip rate is the raw
-    # number the write-up needs: it bounds how far F1 could move on a full
-    # run, which is what "the treatments are indistinguishable" rests on.
+    # The flip rate shows how far F1 could move between two full runs.
     unstable = [cid for cid in complete_ids if len(set(labels_by_candidate[cid])) > 1]
     pairs = disagreeing = 0
     for cid in complete_ids:

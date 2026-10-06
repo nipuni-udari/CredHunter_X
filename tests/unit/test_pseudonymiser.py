@@ -63,7 +63,7 @@ def test_same_seed_is_deterministic():
 
 
 def test_unseeded_calls_are_not_forced_into_a_fixed_value():
-    # not a strict guarantee (collisions are astronomically unlikely, not
-    # impossible) -- just pins that no default seed is silently applied
+    # not a strict guarantee (a collision is very unlikely, not impossible);
+    # it checks that no default seed is applied
     values = {generate_fake_value(GITHUB_SECRET, "github-pat") for _ in range(5)}
     assert len(values) > 1

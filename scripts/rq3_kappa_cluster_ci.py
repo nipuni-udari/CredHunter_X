@@ -1,24 +1,9 @@
-"""Cluster bootstrap confidence interval on the grader-validation kappa.
+"""Cluster bootstrap CI for the grader-validation kappa.
 
-compare_hand_labels_to_checker.py reports kappa = 0.680 over 142 element
-judgements. Those judgements are NOT independent: they come from 71
-remediations at two elements each, and two elements of one remediation are
-graded from the same text by the same grader. A kappa computed as though all
-142 were independent is optimistic about the effective sample size.
-
-This resamples the 71 REMEDIATIONS with replacement -- never the individual
-judgements -- so the dependence inside a remediation is preserved in every
-draw. The naive judgement-level interval is computed alongside it, not
-because it is defensible, but because the gap between the two is the
-evidence that clustering mattered.
-
-Verdicts are read from the stored scored runs, exactly as
-compare_hand_labels_to_checker.py does. Re-scoring would validate against a
-different set of grader answers from the ones the dissertation reports --
-the grader flips ~4.7% of verdicts between runs.
-
-No API calls. Reproduces the published point estimate before reporting
-anything new.
+The 142 judgements behind kappa = 0.680 come from 71 remediations (two
+each), so they aren't independent. This resamples whole remediations; the
+naive interval is printed alongside for comparison. Verdicts come from the
+stored runs and the published kappa is checked first. No API calls.
 
 Usage:
     uv run python scripts/rq3_kappa_cluster_ci.py
@@ -43,8 +28,8 @@ LABELS = RESULTS / "hand_labeling_nipuni.csv"
 SEED = 20260903
 DRAWS = 4000
 
-# The published figures this script must reproduce before its own numbers mean
-# anything. From compare_hand_labels_to_checker.py on the same inputs.
+# Published figures this script has to reproduce first
+# (from compare_hand_labels_to_checker.py on the same inputs).
 PUBLISHED_KAPPA = 0.680
 PUBLISHED_AGREEMENT = 0.901
 
@@ -76,11 +61,8 @@ def _parse_bool(value: str) -> bool | None:
 
 
 def load_clusters() -> dict[tuple[str, str], Judgements]:
-    """Paired human/grader judgements grouped by remediation -- the cluster.
-
-    Keyed by (arm, candidate_id): 211 candidates appear in both scored files,
-    so candidate_id alone could hand one arm's labels the other arm's
-    verdicts."""
+    """Paired human and grader judgements grouped by remediation (the cluster).
+    Keyed by (arm, candidate_id) because 211 candidates appear in both runs."""
     rows_by_candidate: dict[str, list[dict[str, str]]] = defaultdict(list)
     with LABELS.open(encoding="utf-8") as f:
         for row in csv.DictReader(f):
@@ -106,8 +88,7 @@ def load_clusters() -> dict[tuple[str, str], Judgements]:
         if scored is None:
             raise SystemExit(f"{candidate_id}: no {arm} verdict")
 
-        # Match on element text, not position -- a reordered reference would
-        # otherwise pair a human answer with the wrong verdict.
+        # Match on element text, not position, in case the reference was reordered.
         by_element = dict(
             zip(scored["required_elements"], scored["element_present"], strict=True)
         )
@@ -135,10 +116,8 @@ def _percentile_ci(values: list[float]) -> tuple[float, float]:
 
 
 def bootstrap(units: list[Judgements], *, label: str) -> BootstrapResult:
-    """Percentile bootstrap resampling whole units with replacement.
-
-    A unit is a remediation for the cluster bootstrap and a single judgement
-    for the naive one -- the only difference between the two."""
+    """Percentile bootstrap that resamples whole units with replacement: a
+    remediation for the cluster version, a single judgement for the naive one."""
     rng = random.Random(SEED)
     n = len(units)
     kappas: list[float] = []
@@ -150,8 +129,8 @@ def bootstrap(units: list[Judgements], *, label: str) -> BootstrapResult:
             drawn.extend(units[rng.randrange(n)])
         human = {h for h, _ in drawn}
         grader = {g for _, g in drawn}
-        # cohens_kappa returns 1.0 when both raters use one category -- real
-        # behaviour, but it inflates the upper tail, so it is counted.
+        # cohens_kappa returns 1.0 when both raters use one category. That is real
+        # behaviour but it pushes up the upper tail, so it is counted.
         if len(human) == 1 and len(grader) == 1:
             degenerate += 1
         k, a = _kappa_and_agreement(drawn)
@@ -184,8 +163,7 @@ def main() -> None:
     print(f"kappa                   : {kappa:.3f}")
     print(f"raw agreement           : {agreement:.3f}")
 
-    # Nothing derived is trustworthy if the inputs no longer reproduce the
-    # figure the dissertation already reports.
+    # Nothing below can be trusted unless the published figure is reproduced.
     ok = (
         abs(kappa - PUBLISHED_KAPPA) < 0.0005
         and abs(agreement - PUBLISHED_AGREEMENT) < 0.0005
@@ -232,7 +210,7 @@ def main() -> None:
                 "(one category only); cohens_kappa returns 1.0 for those"
             )
 
-    # Per-arm, reported because the sample splits 36/35 and a reader will ask.
+    # Per arm as well, since the sample splits 36/35.
     per_arm: dict[str, dict[str, object]] = {}
     for arm in ("single", "agentic"):
         units = [j for (a, _), j in clusters.items() if a == arm]

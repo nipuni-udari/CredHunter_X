@@ -51,8 +51,8 @@ def _fake_jwt(rng: random.Random, _real_value: str) -> str:
     return f"{header}.{payload}.{signature}"
 
 
-# Fixed-shape fakes for rule types with a well-known canonical format --
-# the fake's length is that format's real length, not the real value's.
+# Fixed-shape fakes for rule types with a known format; the length is the
+# format's, not the real value's.
 _FAKE_GENERATORS: dict[str, Callable[[random.Random, str], str]] = {
     "aws-access-token": _fake_aws_access_token,
     "github-pat": _fake_github_pat,
@@ -63,9 +63,9 @@ _FAKE_GENERATORS: dict[str, Callable[[random.Random, str], str]] = {
 
 
 def _fake_from_charset(rng: random.Random, real_value: str) -> str:
-    """Fallback for rule types with no fixed shape: a same-length,
-    same-charset random string, mirroring CredData's own obfuscation
-    method. Only reads real_value's length/charset, never its content."""
+    """Fallback for rule types without a fixed shape: a random string of the
+    same length and character set, as CredData does. Only the length and
+    character set of real_value are read."""
     charset = classify_charset(real_value)
     pools = [_CHARSET_POOLS[part] for part in ("A-Z", "a-z", "0-9", "symbols") if part in charset]
     alphabet = "".join(pools) or _ALNUM
@@ -73,8 +73,8 @@ def _fake_from_charset(rng: random.Random, real_value: str) -> str:
 
 
 def generate_fake_value(real_value: str, rule_id: str, *, rng: random.Random | None = None) -> str:
-    """A fake-but-realistic same-shape replacement for real_value. rng
-    defaults to a fresh unseeded generator; tests inject a seeded one."""
+    """A realistic fake with the same shape as real_value. rng defaults to a
+    fresh unseeded generator; tests pass a seeded one."""
     rng = rng or random.Random()
     generator = _FAKE_GENERATORS.get(rule_id, _fake_from_charset)
     return generator(rng, real_value)

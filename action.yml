@@ -79,8 +79,7 @@ runs:
 
     - name: Install detectors
       shell: bash
-      # Both pinned: an unpinned detector would silently change what reaches
-      # the classifier between runs.
+      # Both versions are pinned so the detectors can't change between runs.
       run: |
         set -euo pipefail
         v="${{ inputs.gitleaks-version }}"
@@ -119,8 +118,8 @@ runs:
         LLM_REASONING_EFFORT: ${{ inputs.llm-reasoning-effort }}
         GITLEAKS_BINARY_PATH: gitleaks
         TRUFFLEHOG_BINARY_PATH: trufflehog3
-      # Never fails here -- the exit code is enforced at the end, so the SARIF
-      # still gets published when a secret is found.
+      # Never fails here. The exit code is checked in the last step, so the
+      # SARIF is still uploaded when a secret is found.
       run: |
         set +e
         args=("${{ inputs.path }}" --sarif "${{ inputs.sarif-file }}")
@@ -153,8 +152,7 @@ runs:
         if-no-files-found: ignore
 
     - name: Link the reports from the summary
-      # Runs last: neither link exists until its upload has happened, and each
-      # is written only if that upload actually ran.
+      # Runs last, because each link only exists once its upload has run.
       if: always() && inputs.job-summary == 'true'
       shell: bash
       env:
@@ -176,8 +174,8 @@ runs:
     - name: Enforce scan result
       if: always()
       shell: bash
-      # Exit 1 is a verdict about the scanned code; anything higher means the
-      # scanner itself failed, which must never be reported as a finding.
+      # Exit 1 means secrets were found. Anything higher means the scanner
+      # itself failed, which must not be reported as a finding.
       run: |
         code="${{ steps.scan.outputs.exit-code }}"
         case "${code:-1}" in

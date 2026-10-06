@@ -70,14 +70,8 @@ def _install_fake_completion(monkeypatch: pytest.MonkeyPatch) -> _FakeCompletion
 
 
 class _FakeCompletionFirstCandidateAlwaysTimesOut:
-    """Reproduces the real failure found live running Arm B against
-    CredData: a provider call timing out on every retry (litellm.Timeout,
-    exhausting litellm_client's own retries) used to crash the whole batch
-    with an unhandled LiteLLMClientError -- one flaky candidate losing
-    every other candidate's already-completed work. Fails every attempt
-    for the first candidate's call (all _MAX_ATTEMPTS retries), then
-    succeeds for every call after -- a genuinely unrecoverable timeout,
-    not one retry away from working."""
+    """A call that times out on every retry: that candidate is skipped and the
+    rest of the batch still completes."""
 
     def __init__(self) -> None:
         self.calls = 0
@@ -95,15 +89,8 @@ class _FakeCompletionFirstCandidateAlwaysTimesOut:
 
 
 class _FakeCompletionAlwaysEmptyForOneCandidate:
-    """Reproduces the real failure found live in CredHunter-X's own GitHub
-    Action demo: a provider returning a completely empty response body for
-    one candidate (LLMParsingError: 'EOF while parsing a value'), with
-    every other candidate classified normally.
-
-    Empty on every attempt for that one candidate, so it outlives
-    generate()'s empty-response retry -- this pins the skip path for output
-    that is genuinely unusable, not a transient blip (see
-    _FakeCompletionEmptyOnFirstCall for that)."""
+    """A provider that returns an empty body every time: the candidate is
+    skipped and the others are classified."""
 
     def __init__(self) -> None:
         self.calls = 0
@@ -122,9 +109,7 @@ class _FakeCompletionAlwaysEmptyForOneCandidate:
 
 
 class _FakeCompletionEmptyOnFirstCall:
-    """One empty response, then normal output -- the transient provider blip
-    seen once in a 517-candidate run, where the same candidate classified
-    fine on every retry."""
+    """One empty response, then normal output."""
 
     def __init__(self) -> None:
         self.calls = 0
@@ -152,8 +137,8 @@ def test_scan_repository_classifies_both_fixture_secrets(monkeypatch: pytest.Mon
     assert {r.candidate.rule_id for r in outcome.results} == {
         "github-pat",
         "slack-bot-token",
-        # trufflehog-only: the password inside db.py's connection string,
-        # which gitleaks does not report.
+        # trufflehog only: the password in db.py's connection string, which
+        # gitleaks doesn't report.
         "generic.password-in-url",
     }
     assert all(r.classification.label == Label.TRUE_SECRET for r in outcome.results)
@@ -200,8 +185,8 @@ def test_scan_repository_returns_empty_list_for_a_clean_directory(
 def test_scan_repository_agentic_mode_classifies_without_calling_a_tool(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    # The fake always answers immediately (no tool_calls), so this exercises
-    # the "model didn't need a tool" path end-to-end through scan_repository.
+    # The fake always answers at once with no tool calls, so this tests the
+    # no-tool path through scan_repository.
     _install_fake_completion(monkeypatch)
     settings = _fake_settings()
     scan_config = ScanConfig(mode=Mode.AGENTIC)
@@ -211,8 +196,8 @@ def test_scan_repository_agentic_mode_classifies_without_calling_a_tool(
     assert {r.candidate.rule_id for r in outcome.results} == {
         "github-pat",
         "slack-bot-token",
-        # trufflehog-only: the password inside db.py's connection string,
-        # which gitleaks does not report.
+        # trufflehog only: the password in db.py's connection string, which
+        # gitleaks doesn't report.
         "generic.password-in-url",
     }
     assert all(r.classification.label == Label.TRUE_SECRET for r in outcome.results)
@@ -232,8 +217,8 @@ def test_scan_repository_pseudonymised_treatment_classifies_and_never_sends_raw_
     assert {r.candidate.rule_id for r in outcome.results} == {
         "github-pat",
         "slack-bot-token",
-        # trufflehog-only: the password inside db.py's connection string,
-        # which gitleaks does not report.
+        # trufflehog only: the password in db.py's connection string, which
+        # gitleaks doesn't report.
         "generic.password-in-url",
     }
     assert all(r.classification.label == Label.TRUE_SECRET for r in outcome.results)
@@ -255,8 +240,8 @@ def test_scan_repository_metadata_only_never_sends_a_real_or_length_matched_valu
     assert {r.candidate.rule_id for r in outcome.results} == {
         "github-pat",
         "slack-bot-token",
-        # trufflehog-only: the password inside db.py's connection string,
-        # which gitleaks does not report.
+        # trufflehog only: the password in db.py's connection string, which
+        # gitleaks doesn't report.
         "generic.password-in-url",
     }
     assert all(r.classification.label == Label.TRUE_SECRET for r in outcome.results)
@@ -271,10 +256,8 @@ def test_scan_repository_metadata_only_never_sends_a_real_or_length_matched_valu
 def test_scan_repository_survives_one_candidate_whose_call_times_out(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """The real failure found live running Arm B against CredData: a
-    timed-out provider call raised LiteLLMClientError, which
-    skip_candidate_on_error didn't catch, crashing the whole batch. Must
-    survive it the same way an empty response or a guard block do."""
+    """A LiteLLMClientError is skipped like an empty response or a guard block,
+    instead of stopping the batch."""
     fake = _FakeCompletionFirstCandidateAlwaysTimesOut()
     monkeypatch.setattr(litellm_client_module.litellm, "completion", fake)
     monkeypatch.setattr(litellm_client_module.time, "sleep", lambda *a, **k: None)
@@ -291,11 +274,8 @@ def test_scan_repository_survives_one_candidate_whose_call_times_out(
 def test_scan_repository_survives_one_candidate_with_an_empty_model_response(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """The real bug found live in the GitHub Action demo: an unhandled
-    LLMParsingError from one candidate crashed the whole scan with a
-    traceback before any report was ever written. scan_repository() must
-    survive it, still classify the other candidate, and truthfully report
-    that one was skipped rather than silently returning a "clean" result."""
+    """An LLMParsingError on one candidate doesn't stop the scan: the other
+    candidate is classified and the skip is reported."""
     fake = _FakeCompletionAlwaysEmptyForOneCandidate()
     monkeypatch.setattr(litellm_client_module.litellm, "completion", fake)
     monkeypatch.setattr(litellm_client_module.time, "sleep", lambda *a, **k: None)
@@ -312,9 +292,7 @@ def test_scan_repository_survives_one_candidate_with_an_empty_model_response(
 def test_scan_repository_recovers_a_candidate_whose_response_was_empty_once(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """A one-off empty completion used to drop the candidate permanently:
-    it is a successful response, so the error-retry path never saw it, and
-    it died at the parse instead. Every candidate must now survive."""
+    """A single empty reply is retried, so no candidate is lost."""
     fake = _FakeCompletionEmptyOnFirstCall()
     monkeypatch.setattr(litellm_client_module.litellm, "completion", fake)
     monkeypatch.setattr(litellm_client_module.time, "sleep", lambda *a, **k: None)
@@ -356,16 +334,8 @@ def _make_candidate(
 def test_another_candidates_registered_value_appearing_nearby_does_not_block_this_one(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """Regression test for the real bug found running trufflehog3 against
-    CredData: two candidates in the same repo, each with its own distinct
-    "secret" (often not a real secret at all -- e.g. a gravatar hash
-    trufflehog3's high-entropy rule mistakes for one). When one candidate's
-    context window happens to also contain the other's registered value,
-    the guard used to block the first candidate entirely and drop it from
-    the report -- even though nothing of its own was leaking. Every
-    finding should reach the LLM and show up in the report on its own
-    merits, regardless of what other candidates in the same repo look
-    like."""
+    """One candidate's context contains another candidate's value (e.g. a
+    gravatar hash). Each candidate is still classified and reported on its own."""
     _install_fake_completion(monkeypatch)
     settings = _fake_settings()
     scan_config = ScanConfig(mode=Mode.SINGLE, treatment=Treatment.RAW)

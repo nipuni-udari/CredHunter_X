@@ -69,10 +69,8 @@ def test_mask_context_window_masks_targets_own_secret():
 
 
 def test_mask_context_window_also_masks_other_secrets_in_the_same_window():
-    """The specific bug the design calls out: a naive implementation only
-    masks the flagged candidate's own line and leaves other secrets in the
-    surrounding context exposed. Both real secrets here are on adjacent
-    lines, well within the default context window."""
+    """Other secrets in the context window are masked too, not just the
+    candidate's own line. The two secrets here are on adjacent lines."""
     candidates = load_candidates()
     github = next(c for c in candidates if c.rule_id == "github-pat")
     slack = next(c for c in candidates if c.rule_id == "slack-bot-token")
@@ -89,8 +87,8 @@ def test_mask_context_window_excludes_candidates_outside_the_window():
     github = next(c for c in candidates if c.rule_id == "github-pat")
     slack = next(c for c in candidates if c.rule_id == "slack-bot-token")
 
-    # context_lines=0: github's own window is just its own line, so slack's
-    # line (the very next one) never enters the window at all
+    # context_lines=0: github's window is just its own line, so slack's line
+    # is outside it
     result = mask_context_window(github, [slack])
 
     assert len(result.masked_spans) == 1
@@ -108,15 +106,8 @@ def test_mask_context_window_ignores_candidates_from_a_different_file():
 
 
 def test_mask_context_window_scrubs_a_leftover_fragment_elsewhere_in_the_window():
-    """The real bug this fix closes: the whole-value replace above only
-    catches an exact repeat of the *entire* secret. A partial repeat --
-    the same value reformatted or embedded in different surrounding text
-    elsewhere in the window -- can still contain a FRAGMENT_LEN-character
-    run of the real secret, which is exactly the granularity LeakGuard
-    checks payloads at (see SecretRegistry.fragments()). Left unscrubbed,
-    that fragment would sail through masking untouched, then trip the
-    guard on the very next call and get a legitimate scanner-found
-    candidate silently dropped from results (skip_candidate_on_error)."""
+    """A partial repeat of the secret elsewhere in the window is scrubbed too,
+    so the guard doesn't block the call."""
     fragment = GITHUB_SECRET[4:24]  # 20 chars, well over FRAGMENT_LEN (16)
     candidate = Candidate(
         id="c1",
@@ -130,9 +121,8 @@ def test_mask_context_window_scrubs_a_leftover_fragment_elsewhere_in_the_window(
         entropy=4.0,
         matched_lines=[f'TOKEN = "{GITHUB_SECRET}"'],
         context_before=[],
-        # Not a verbatim repeat of the whole value, so the whole-value
-        # replace never fires here -- but it does share a long enough
-        # run of the real secret to count as a fragment leak.
+        # Not an exact repeat, so the whole-value replace doesn't fire, but it
+        # shares a long enough run to count as a fragment leak.
         context_after=[f"# backup ref: xxx-{fragment}-yyy"],
         repo_id="test-repo",
     )
@@ -167,15 +157,9 @@ def _fragment_leak_candidate(fragment: str) -> Candidate:
 
 
 def test_fragment_scrub_strands_no_real_secret_characters():
-    """Passing LeakGuard is necessary but NOT sufficient. The guard only
-    looks for whole FRAGMENT_LEN-character runs, so scrubbing fragments one
-    at a time can satisfy it while still leaving shorter runs of the real
-    secret in the payload -- each replacement destroys the overlap the next
-    (heavily overlapping) fragment needed to match, stranding the characters
-    between them. Measured against the real corpus, that leaked partial
-    values on 83 of 517 candidates. Masked treatment promises no real value
-    reaches the model, not merely 'no 16-character run of it'."""
-    leftover = GITHUB_SECRET[4:36]  # 32 chars — two fragments' worth, overlapping
+    """Passing the guard isn't enough: no shorter run of the secret may be left
+    in the window either."""
+    leftover = GITHUB_SECRET[4:36]  # 32 chars: two overlapping fragments' worth
     snippet = mask_context_window(_fragment_leak_candidate(leftover), []).sanitised_snippet
 
     # No run of >=6 real characters may survive anywhere in the window.
@@ -188,12 +172,8 @@ def test_fragment_scrub_strands_no_real_secret_characters():
 
 
 def test_fragment_scrub_is_independent_of_fragment_iteration_order():
-    """fragments_of() returns a set, and Python randomises string hashing
-    per process -- so a scrub whose result depends on iteration order
-    produces a different prompt run to run and the evaluation stops being
-    reproducible. Set order is fixed *within* one process, so feeding the
-    scrub differently-ordered sequences of the same fragments is what
-    actually reproduces the cross-process effect here."""
+    """fragments_of() returns a set, whose order changes between processes. The
+    scrub must give the same result whatever order the fragments come in."""
     text = f"# backup ref: xxx-{GITHUB_SECRET[4:36]}-yyy"
     fragments = sorted(fragments_of(GITHUB_SECRET))
 
@@ -252,17 +232,15 @@ def _url_candidate() -> Candidate:
 def test_secret_components_extracts_the_credential_from_any_delimited_format(
     description, matched_value, expected
 ):
-    """A scanner reports one blob; the credential inside it is often far
-    shorter than FRAGMENT_LEN, so no window of the blob ever equals it.
-    Splitting on the field separators every credential format shares keeps
-    this working beyond the one url shape the corpus happened to contain."""
+    """Splitting on common field separators makes this work for more than one
+    url shape."""
     assert secret_components(matched_value) == expected, description
 
 
 @pytest.mark.parametrize(
     ("description", "matched_value"),
     [
-        # Blanking these would destroy the identifiers the classifier reads.
+        # Masking these would remove identifiers the classifier reads.
         ("password is a dictionary word", "ftp://u:password@h/x"),
         ("password is 'test'", "ftp://u:test@h/x"),
         ("key names must not become secrets", '{"client_secret": "x", "api_key": "y"}'),
@@ -275,20 +253,14 @@ def test_secret_components_extracts_the_credential_from_any_delimited_format(
 def test_secret_components_refuses_tokens_that_would_blank_ordinary_code(
     description, matched_value
 ):
-    """The cost of registering a sub-value is that masking blanks it
-    everywhere in the window. "password", "client_secret" and "example.com"
-    are code, not credentials, and losing them costs the classifier more
-    than hiding them gains."""
+    """A registered sub-value is masked everywhere in the window, so words
+    like "password", "client_secret" and "example.com" must not be registered."""
     assert secret_components(matched_value) == set(), description
 
 
 def test_mask_context_window_scrubs_a_url_password_repeated_on_its_own():
-    """gitleaks' password-in-url rule reports the WHOLE url, so no
-    FRAGMENT_LEN-character window of it ever equals the short password
-    inside. A file that also asserts that password on its own line leaked
-    it -- past both masking and the guard, which share the same 16-char
-    granularity. Registering the credential component closes it (9 real
-    cases in the CredData corpus, one a complete password)."""
+    """password-in-url reports the whole url. The short password inside is
+    registered too, so a bare copy of it elsewhere in the file is masked."""
     result = mask_context_window(_url_candidate(), [])
 
     assert DB_URL not in result.sanitised_snippet
@@ -300,10 +272,8 @@ def test_mask_context_window_scrubs_a_url_password_repeated_on_its_own():
 
 
 def test_url_password_scrub_does_not_trip_the_guard_in_raw_treatment():
-    """Raw treatment permits a candidate's OWN secret. A decoded password
-    is not a substring of the encoded url it came from, so permitting only
-    the whole matched value would make the guard block a raw call over the
-    candidate's own material -- turning a leak fix into dropped results."""
+    """A decoded password is part of the candidate's own secret, so raw
+    treatment permits it too."""
     candidate = _url_candidate()
     registry = SecretRegistry()
     registry.register(candidate.id, candidate.matched_value)
@@ -314,11 +284,8 @@ def test_url_password_scrub_does_not_trip_the_guard_in_raw_treatment():
 
 
 def test_mask_context_window_masks_a_secret_whose_value_is_in_the_window_but_line_is_not():
-    """Neighbours used to be selected by line-number overlap, so a
-    candidate reported at line 500 whose value is ALSO used inside this
-    window went unmasked -- and the guard never sees it either, since it
-    only registers the target. Selection is by file now, with presence
-    decided by the text itself."""
+    """Every candidate in the file is checked against the window's text, not
+    only those whose reported line falls inside it."""
     key = "AKIAIOSFODNN7EXAMPLE"
     target = Candidate(
         id="t",
@@ -358,13 +325,12 @@ def test_mask_context_window_masks_a_secret_whose_value_is_in_the_window_but_lin
 
 
 def test_a_same_file_candidate_absent_from_the_window_gets_no_metadata_span():
-    """The scrub side is broad (every candidate in the file); the metadata
-    side must stay narrow, or the model is handed a description of a secret
-    it cannot see anywhere in its window."""
+    """Scrubbing covers every candidate in the file, but metadata only covers
+    secrets actually found in the window."""
     candidates = load_candidates()
     github = next(c for c in candidates if c.rule_id == "github-pat")
-    # A value that appears nowhere in github's window, unlike the fixture's
-    # own slack token, which really does sit inside it.
+    # A value that isn't in github's window, unlike the fixture's slack
+    # token, which is.
     elsewhere = replace(
         next(c for c in candidates if c.rule_id == "slack-bot-token"),
         id="elsewhere",
@@ -391,10 +357,8 @@ def test_build_raw_context_leaves_target_secret_unmasked():
 
 
 def test_build_raw_context_still_masks_other_secrets_in_the_same_window():
-    """RAW treatment means "reveal this one candidate's real value," not
-    "expose every secret nearby" — a bystander secret sharing the window
-    (here, Slack's token sits one line below GitHub's) must stay masked
-    even when the target itself is sent raw."""
+    """Raw reveals the target's own value only. A neighbouring secret in the
+    window (Slack's token, one line below GitHub's) stays masked."""
     candidates = load_candidates()
     github = next(c for c in candidates if c.rule_id == "github-pat")
     slack = next(c for c in candidates if c.rule_id == "slack-bot-token")
@@ -408,9 +372,8 @@ def test_build_raw_context_still_masks_other_secrets_in_the_same_window():
 
 
 def test_mask_arbitrary_text_masks_a_known_secret_found_anywhere():
-    """Unlike the window-based masking above, this is for Arm B's tool
-    results -- text that can come from anywhere in the repo, not just a
-    candidate's own precomputed window."""
+    """For Arm B's tool results: text from anywhere in the repo, not a
+    candidate's own window."""
     candidates = load_candidates()
     slack = next(c for c in candidates if c.rule_id == "slack-bot-token")
 
@@ -448,12 +411,8 @@ def test_mask_arbitrary_text_handles_an_empty_candidate_list():
 
 
 def test_mask_arbitrary_text_masks_a_truncated_snippet_of_a_multiline_secret():
-    """The real bug this rewrite fixes: Arm B's search_file tool only ever
-    returns a small +/-2-line snippet, which for a multi-line PEM key never
-    contains the *entire* matched_value -- a whole-value-only replace would
-    never fire, silently leaving real key bytes in a tool result. This
-    snippet is an interior line only (no BEGIN/END markers, exactly what
-    search_file would return), well short of the full key."""
+    """search_file returns a short snippet that holds only part of a multi-line
+    PEM key. That part must still be masked."""
     private_key = (
         "-----BEGIN RSA PRIVATE KEY-----\n"
         "MIICWgIBAAKBgQDTj1bqB4WmayWNPB+8jVSYpZYk80Ujvj680pOTh2bORBjbIAyz\n"
@@ -478,7 +437,7 @@ def test_mask_arbitrary_text_masks_a_truncated_snippet_of_a_multiline_secret():
     )
 
     snippet = f"63: {key_line}\n64: -----END RSA PRIVATE KEY-----"
-    assert private_key not in snippet  # confirms this is genuinely partial
+    assert private_key not in snippet  # confirms this is only part of the key
 
     result = mask_arbitrary_text(snippet, [candidate])
 
@@ -487,10 +446,8 @@ def test_mask_arbitrary_text_masks_a_truncated_snippet_of_a_multiline_secret():
 
 
 def test_mask_arbitrary_text_merges_overlapping_fragment_matches_fully():
-    """A leaked run longer than one FRAGMENT_LEN window must be blanked out
-    completely, not just its first FRAGMENT_LEN characters -- an early
-    implementation attempt (replace-one-fragment-and-stop) would have left
-    a tail of real secret characters exposed."""
+    """A leaked run longer than one fragment must be masked in full, not just
+    its first FRAGMENT_LEN characters."""
     candidates = load_candidates()
     slack = next(c for c in candidates if c.rule_id == "slack-bot-token")
 
@@ -541,10 +498,9 @@ def test_build_pseudonymised_context_injects_a_recognisable_fake_shape():
 
 
 def test_build_pseudonymised_context_falls_back_to_bullet_masking_for_multiline_secrets():
-    """The documented limitation: a multi-line matched_value (private keys)
-    can never match via exact single-line substring replace, so this
-    silently falls back to the same bullet-masking mask_context_window
-    uses, rather than attempting realistic multi-line PEM synthesis."""
+    """Known limitation: a multi-line value (private key) can't be matched by a
+    single-line replace, so it falls back to bullet masking like
+    mask_context_window."""
     multiline_key = "-----BEGIN RSA PRIVATE KEY-----\nMIIB\n-----END RSA PRIVATE KEY-----"
     candidate = Candidate(
         id="c1",

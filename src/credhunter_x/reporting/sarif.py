@@ -9,8 +9,8 @@ from credhunter_x.models.classification import Label, Severity
 from credhunter_x.pipeline.orchestrator import ScanResult
 from credhunter_x.reporting.rule_titles import rule_title
 
-# Tracks pyproject.toml's [project].version -- SARIF's driver.version is
-# informational only, not worth wiring up importlib.metadata for.
+# Kept in step with pyproject.toml's version by hand; driver.version is
+# informational only.
 _TOOL_VERSION = "0.1.0"
 
 _SCHEMA_URI = (
@@ -26,10 +26,9 @@ _SEVERITY_TO_LEVEL: dict[Severity, str] = {
 
 
 def build_sarif_report(results: list[ScanResult]) -> dict[str, Any]:
-    """Builds a SARIF 2.1.0 document for GitHub code scanning. Only
-    true_secret and uncertain become results -- false_positive is
-    excluded, or this would just reproduce GitLeaks' own alert-fatigue
-    problem. uncertain is always "note" level regardless of severity."""
+    """Builds a SARIF 2.1.0 document (Fanning & Golding, 2023) for GitHub code
+    scanning. Only true_secret and uncertain become results; false positives are
+    left out to avoid alert fatigue. uncertain is always level "note"."""
     included = [
         r for r in results if r.classification.label in (Label.TRUE_SECRET, Label.UNCERTAIN)
     ]

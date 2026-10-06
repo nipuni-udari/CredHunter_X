@@ -1,12 +1,7 @@
-"""Exports a sample of real true_secret remediations for hand-labeling —
-the manual step behind RQ3's Cohen's kappa validation of the automated
-element-checker. One row per (candidate, required element) pair, with a
-blank human_present column for the student to fill in by hand (e.g. in a
-spreadsheet). No LLM calls, no fabricated labels — pure sampling.
-
-Requires remediation_reference.yaml to actually have required_elements
-filled in; nothing to export from the placeholder scaffold. Not part of
-CI, run manually.
+"""Exports a sample of true_secret remediations for hand-labelling, the
+manual step behind the RQ3 kappa check. One row per (candidate, required
+element), with an empty human_present column to fill in by hand.
+No LLM calls; it only samples.
 
 Usage:
     uv run python scripts/export_for_hand_labeling.py --arm single --treatment raw --split all
@@ -67,7 +62,7 @@ def main() -> None:
     sampled_rows: list[dict] = []
     taken: set[str] = set()
     for arm in arms:
-        # result_stem, not a hand-built name: the files carry source and model too.
+        # result_stem gives the actual file name.
         stem = result_stem(
             arm=arm,
             treatment=args.treatment,
@@ -87,16 +82,15 @@ def main() -> None:
             if r["label"] == "true_secret"
             and r["rule_id"] in reference
             and reference[r["rule_id"]].required_elements
-            # Never the same file:line twice: one candidate judged under both
-            # arms gives two non-independent rows and inflates agreement.
+            # Skip a file:line already sampled, so one candidate isn't labelled twice.
             and r["candidate_id"] not in taken
         ]
         if not scoreable:
             print(f"nothing to sample for {arm} -- reference has no filled-in elements yet")
             return
 
-        # Stratify by rule_id: an even share per rule, falling back to
-        # whatever's available if a rule has fewer candidates than its share.
+        # Stratify by rule_id: an equal share per rule, or everything a rule has
+        # if it has fewer.
         by_rule: dict[str, list[dict]] = {}
         for row in scoreable:
             by_rule.setdefault(row["rule_id"], []).append(row)
@@ -115,15 +109,13 @@ def main() -> None:
         sampled_rows.extend(picked)
         print(f"  {arm}: {len(picked)} remediations sampled")
 
-    # Interleave the arms so the labeller does not work through one style
-    # then the other, which would let fatigue land unevenly on one arm.
+    # Interleave the arms so the labeller sees them mixed.
     rng.shuffle(sampled_rows)
 
     args.out.parent.mkdir(exist_ok=True)
     with args.out.open("w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
-        # arm/treatment travel with the rows so the kappa step reads the
-        # matching scored run and cannot compare against the wrong arm.
+        # Keep arm and treatment on each row so the kappa script reads the right run.
         writer.writerow(
             [
                 "candidate_id",
@@ -137,8 +129,7 @@ def main() -> None:
             ]
         )
         for row in sampled_rows:
-            # element_no makes the two rows per remediation visibly different even
-            # when the long element_text column is scrolled off screen.
+            # element_no tells the two rows of one remediation apart at a glance.
             for i, element in enumerate(reference[row["rule_id"]].required_elements, 1):
                 writer.writerow(
                     [

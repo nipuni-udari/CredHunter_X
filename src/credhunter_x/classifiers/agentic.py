@@ -108,10 +108,9 @@ _TOOL_SCHEMAS: list[dict[str, Any]] = [
 
 
 class AgenticClassifier:
-    """Arm B: a turn-capped loop where the LLM can call tools before
-    answering. Every tool result is masked against all known candidates
-    before being appended to the conversation; the guard re-checks the
-    full history on every call anyway, as a second layer."""
+    """Arm B: a loop, capped at a fixed number of turns, in which the LLM can
+    call tools before answering. Tool results are masked before they are added
+    to the conversation, and the guard checks the whole history again."""
 
     def __init__(
         self, client: LLMClient, source_root: Path, all_candidates: list[Candidate]
@@ -132,9 +131,7 @@ class AgenticClassifier:
 
         for turn in range(1, _MAX_TURNS + 1):
             if turn == _MAX_TURNS:
-                # Dropping the tools list here would be cleaner, but Groq
-                # errors out if tool_calls already happened and none are
-                # on offer. A text nudge is weaker but won't crash the call.
+                # Last turn: keep the tools available and ask for the final answer.
                 messages.append(
                     {
                         "role": "user",
@@ -156,13 +153,7 @@ class AgenticClassifier:
             total_latency_ms += response.latency_ms
 
             if not response.tool_calls:
-                # No tools called and nothing said: a transient empty
-                # completion, which finalises on "" and loses the candidate.
-                # generate()'s empty-retry doesn't reach here -- Arm B goes
-                # through generate_with_tools, where empty content alongside
-                # tool calls is normal and must not be retried. Turns remain,
-                # so ask again; the last turn falls through to _finalise and
-                # skips exactly as before.
+                # Empty reply (no text, no tool calls): ask again while turns remain.
                 if not response.text.strip() and turn < _MAX_TURNS:
                     messages.append(
                         {
@@ -189,9 +180,8 @@ class AgenticClassifier:
                 (tc for tc in response.tool_calls if tc.name == _SUBMIT_TOOL_NAME), None
             )
             if submission is not None:
-                # Some models route structured output through tool-calling
-                # even when asked for plain text, so a call to this tool
-                # counts as the final answer.
+                # Some models answer through tool-calling even when asked for plain text,
+                # so a call to this tool counts as the final answer.
                 try:
                     return self._finalise(
                         candidate,
@@ -204,13 +194,8 @@ class AgenticClassifier:
                         total_latency_ms,
                     )
                 except LLMParsingError:
-                    # The model announced its final answer and then submitted
-                    # a form that doesn't validate -- observed once as
-                    # submit_classification({}), which cost the candidate its
-                    # place in the run despite three unused turns remaining.
-                    # Say what was wrong and let it resubmit; the turn cap
-                    # still bounds this, and the last turn re-raises so
-                    # genuinely unusable output is skipped exactly as before.
+                    # Invalid submission: tell the model what was wrong and let it try again.
+                    # On the last turn the error is raised.
                     if turn == _MAX_TURNS:
                         raise
                     messages.append(self._assistant_message(response))
@@ -243,7 +228,7 @@ class AgenticClassifier:
                     {"role": "tool", "tool_call_id": tool_call.id, "content": masked_result}
                 )
 
-        # Ran out of turns -- fail safe with UNCERTAIN instead of crashing.
+        # Out of turns: return UNCERTAIN instead of crashing.
         return ClassificationResult(
             candidate_id=candidate.id,
             arm="agentic",

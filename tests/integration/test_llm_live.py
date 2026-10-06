@@ -29,10 +29,9 @@ REPORT_PATH = FIXTURES_DIR / "gitleaks_report.json"
 
 @pytest.mark.live
 def test_guarded_llm_client_classifies_a_real_secret_end_to_end():
-    """Manual, opt-in sanity check against whichever real provider is
-    configured in .env (excluded from default CI via the "live" marker).
-    Proves the whole chain works together: masking -> prompt -> guarded
-    call -> parsing, regardless of which LLM provider is behind it."""
+    """Manual check against the real provider in .env (marked "live", so not
+    run in CI). Checks that masking, prompt, guarded call and parsing work
+    together."""
     settings = Settings()
     findings = json.loads(REPORT_PATH.read_text())
     candidates = parse_gitleaks_report(findings, SAMPLE_REPO, repo_id="test-repo", context_lines=10)
@@ -109,11 +108,8 @@ def test_guarded_llm_client_classifies_a_real_secret_end_to_end_metadata_only():
 
 @pytest.mark.live
 def test_guarded_llm_client_scores_remediation_elements_end_to_end():
-    """The highest-risk test in the RQ3 build: proves the provider's
-    structured-output mode actually honors a SECOND, non-default Pydantic
-    schema (ElementCheckSchema) the way ClassificationSchema is honored
-    today. If this fails, the schema design itself needs revisiting
-    before any more RQ3 code is built on top of it."""
+    """Checks that the provider's structured-output mode also works for
+    ElementCheckSchema, which the RQ3 checker uses."""
     settings = Settings()
     registry = SecretRegistry()
     registry.register("dummy", "not-a-real-secret-just-for-guard-population")

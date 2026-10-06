@@ -8,9 +8,8 @@ _MAX_RESULT_CHARS = 2000
 
 
 def search_file(source_root: Path, file_path: str, query: str) -> str:
-    """Searches one file for a literal text match, with a little
-    surrounding context. Returns raw content -- caller must mask it
-    before sending to the LLM."""
+    """Searches one file for a literal match and returns it with a few lines
+    of context. The result is raw, so the caller must mask it first."""
     if not query:
         return "search_file error: query must not be empty"
 

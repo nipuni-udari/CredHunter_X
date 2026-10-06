@@ -1,18 +1,10 @@
-"""Compares the student's hand-filled labels (from
-export_for_hand_labeling.py) against the element-checker's own verdicts,
-reporting Cohen's kappa — the validation step that decides whether the
-automated checker is trustworthy at scale (the scope document's own rule
-of thumb: >= ~0.85 raw agreement). No labels are read from anywhere but
-the CSV the student filled in by hand. No LLM calls, run manually.
-
-Verdicts are READ from the scored run's --out file, never re-generated.
-Re-scoring would compare the hand labels against a fresh set of checker
-answers rather than the ones the dissertation reports, and the checker
-flips ~4.7% of verdicts between runs (rq3_checker_stability.json), so the
-kappa would not apply to the reported pass rates.
+r"""Compares the hand labels (from export_for_hand_labeling.py) with the
+element checker's verdicts using Cohen's kappa (Cohen, 1960), to check that
+the checker can be trusted. Verdicts are read from the scored run rather than
+generated again, so the kappa matches the reported pass rates. No LLM calls.
 
 Usage:
-    uv run python scripts/compare_hand_labels_to_checker.py \\
+    uv run python scripts/compare_hand_labels_to_checker.py \
         --labels results/hand_labeling_sample.csv
 """
 
@@ -29,7 +21,7 @@ from credhunter_x.evaluation.metrics import cohens_kappa
 from credhunter_x.evaluation.remediation_reference import load_remediation_reference
 
 RESULTS_DIR = Path("results")
-_ANY_ARM = "*"  # --scores names one file directly; the CSV's arm column is then unused
+_ANY_ARM = "*"  # --scores names one file directly, so the CSV's arm column is not used
 
 
 def _parse_bool(value: str) -> bool | None:
@@ -82,12 +74,8 @@ def main() -> None:
         )
         return
 
-    # Every arm present in the CSV gets its own scored file. Reading the arm
-    # from the first row only would silently compare one arm's labels against
-    # the other arm's verdicts on a mixed sample.
-    # Keyed by (arm, candidate_id), never candidate_id alone: 211 candidates
-    # appear in BOTH scored files, so a flat merge would hand one arm's rows
-    # the other arm's verdicts.
+    # Read each arm's scored file and key verdicts by (arm, candidate_id),
+    # since some candidates appear in both arms.
     verdicts: dict[tuple[str, str], dict] = {}
     if args.scores is not None:
         paths = {_ANY_ARM: args.scores}
@@ -130,8 +118,7 @@ def main() -> None:
             print(f"  skipping {candidate_id}: no {arm} verdict for it")
             skipped += 1
             continue
-        # Match on element text, not position -- a reordered reference would
-        # otherwise silently pair a human answer with the wrong verdict.
+        # Match on element text, not position, in case the reference was reordered.
         by_element = dict(
             zip(scored_row["required_elements"], scored_row["element_present"], strict=True)
         )
@@ -143,7 +130,7 @@ def main() -> None:
                 skipped += 1
                 continue
             human_value = _parse_bool(row["human_present"])
-            assert human_value is not None  # already validated above
+            assert human_value is not None  # already checked above
             human_labels.append(human_value)
             checker_labels.append(checker_value)
 

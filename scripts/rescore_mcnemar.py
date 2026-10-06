@@ -1,12 +1,7 @@
-"""Recomputes RQ1's detector-vs-LLM McNemar for every run already on disk,
-under both definitions of "correct", straight from results/*.jsonl.
-
-Read-only over the stored rows: no LLM calls, no re-scan, and the existing
-*_summary.json files are left exactly as they were generated. The rescore
-lands in its own file so the original numbers stay auditable.
-
-The runs on disk were scored with only the first definition, which cannot
-favour the LLM by construction -- see metrics.agreement_vectors.
+"""Recomputes the RQ1 detector-vs-LLM McNemar test (McNemar, 1947) for every
+stored run, under both definitions of "correct" (see
+metrics.agreement_vectors). Reads results/*.jsonl and writes to a separate
+file, leaving the original summaries unchanged.
 
 Usage:
     uv run python scripts/rescore_mcnemar.py
@@ -33,7 +28,7 @@ def _rescore(rows: list[dict]) -> dict:
     outcomes = [MatchOutcome(r["ground_truth_outcome"]) for r in rows]
     flagged = [r["label"] == "true_secret" for r in rows]
 
-    # as run_evaluation scored it: correct = flagged AND really a secret
+    # as run_evaluation scored it: correct = flagged and really a secret
     detector_old = [o is MatchOutcome.TRUE_POSITIVE for o in outcomes]
     llm_old = [
         f and o is MatchOutcome.TRUE_POSITIVE for f, o in zip(flagged, outcomes, strict=True)

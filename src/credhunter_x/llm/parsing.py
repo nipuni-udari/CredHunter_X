@@ -19,9 +19,8 @@ _CODE_FENCE = re.compile(r"^```(?:json)?\s*(.*?)\s*```$", re.DOTALL)
 
 
 def _strip_code_fence(text: str) -> str:
-    """Some models (e.g. minimax-m3) ignore response_format and wrap JSON in
-    a markdown code fence regardless of instructions -- strip it if present
-    so a well-formed answer isn't rejected as malformed."""
+    """Some models (e.g. minimax-m3) wrap JSON in a markdown code fence anyway.
+    Strip it so a valid answer isn't rejected."""
     match = _CODE_FENCE.match(text.strip())
     return match.group(1) if match else text
 

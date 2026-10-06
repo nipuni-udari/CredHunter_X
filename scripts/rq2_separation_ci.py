@@ -1,8 +1,8 @@
-"""Exploratory: is the agentic arm's narrower confidence gap more than noise?
+"""Exploratory: is the agentic arm's smaller confidence gap more than noise?
 
-Bootstraps the difference in (mean confidence when right - mean confidence
-when wrong) between the two raw runs, over flagged, scored candidates only.
-Not part of the pre-registered test plan -- report it as exploratory.
+Bootstraps the difference in (mean confidence when right minus mean
+confidence when wrong) between the two raw runs, over flagged, scored
+candidates. Not one of the planned tests, so it is reported as exploratory.
 
 Usage:
     uv run python scripts/rq2_separation_ci.py

@@ -1,8 +1,8 @@
-"""Prints the RQ4 four-treatment comparison table (precision, recall, F1,
-Δf1 vs raw, bytes of real secret sent) for one arm, from results already on
-disk — no LLM calls, pure aggregation over results/*_summary.json and
-results/*.jsonl. Run scripts/run_evaluation.py for all four treatments
-first (same --arm/--split) before this has anything to read.
+"""Prints the RQ4 comparison table for one arm: precision, recall, F1, the
+change in F1 against raw, and bytes of real secret sent.
+
+Reads results/ only, no LLM calls. Run run_evaluation.py for all four
+treatments first, with the same --arm and --split.
 
 Usage:
     uv run python scripts/compare_treatments.py --arm single --split all
@@ -36,21 +36,15 @@ def _bytes_of_real_secret_sent(jsonl_path: Path, treatment: str) -> int:
 
 
 def _discover_run(arm: str, split: str) -> tuple[str, str]:
-    """Which (source, model) run to report on, read from the summaries'
-    own contents rather than guessed from a default.
-
-    A wrong guess here is silent: it reports a different run's numbers, or
-    prints "missing" for results that are sitting right there. Every
-    summary records its own source and model, so infer when there is only
-    one candidate run and make the user choose when there is more than
-    one."""
+    """Works out which (source, model) run to report from the summaries
+    themselves. If there is one, use it; if there are several, the user has to
+    choose, because a wrong guess would quietly report another run."""
     found: set[tuple[str, str]] = set()
     for path in RESULTS_DIR.glob(f"{arm}_*_{split}_*_summary.json"):
         summary = json.loads(path.read_text(encoding="utf-8"))
         if summary.get("arm") != arm or summary.get("split") != split:
             continue
-        # Summaries written before source/model were recorded can't identify
-        # a run, and their files no longer follow the current naming either.
+        # Skip summaries that don't record source or model.
         source, model = summary.get("source"), summary.get("model")
         if source and model:
             found.add((source, model))

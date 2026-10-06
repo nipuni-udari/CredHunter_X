@@ -47,8 +47,8 @@ def load_cost_rows(jsonl_path: Path) -> list[CostRow]:
 
 
 def compute_cost_summary(rows: list[CostRow]) -> CostSummary:
-    """Arm A is always 1 turn; Arm B's varies by how much tool use the
-    model chose to do."""
+    """Arm A always takes one turn; Arm B depends on how many tools the model
+    used."""
     if not rows:
         raise ValueError("cannot summarise cost over an empty result set")
 

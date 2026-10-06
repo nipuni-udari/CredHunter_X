@@ -10,8 +10,7 @@ _DEFAULT_LABELS_PATH = Path("data/processed/creddata_python_labels.csv")
 @dataclass(frozen=True)
 class GroundTruthRow:
     """One row of CredData's ground truth, filtered to Python files.
-    value_start/value_end use -1 (not None) as CredData's own "no value"
-    sentinel, matching evaluation/labeler.py's expectations."""
+    value_start/value_end use -1 for "no value", as CredData does."""
 
     id: str
     file_id: str

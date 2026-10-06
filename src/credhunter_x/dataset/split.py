@@ -8,8 +8,8 @@ from credhunter_x.dataset.creddata import GroundTruthRow
 def split_by_repo(
     rows: list[GroundTruthRow], *, dev_fraction: float = 0.5, seed: int = 42
 ) -> tuple[list[GroundTruthRow], list[GroundTruthRow]]:
-    """Splits by RepoID, not by row -- same-repo rows in both sets would
-    leak information between them. Deterministic given the same seed."""
+    """Splits by RepoID, not by row, so no repo ends up in both sets.
+    Deterministic for a given seed."""
     repo_ids = sorted({row.repo_id for row in rows})
     rng = random.Random(seed)
     rng.shuffle(repo_ids)

@@ -21,14 +21,12 @@ class SecretMetadata:
 
 @dataclass(frozen=True)
 class MaskedSpan:
-    """One masked secret within a context window. Carries its own metadata
-    since a window can hold several distinct secrets.
+    """One masked secret in a context window, with its own metadata, since a
+    window can hold several secrets.
 
-    is_target records whether this span is the candidate being classified
-    rather than a neighbour. It has to be carried here because start/end
-    cannot recover it: two distinct secrets on one line produce spans with
-    identical line ranges, so a line-number comparison labels both as the
-    candidate under review and hands the model contradictory metadata."""
+    is_target says whether this is the candidate being classified. It can't be
+    worked out from start/end, because two secrets on one line have the same
+    line range."""
 
     start: int
     end: int

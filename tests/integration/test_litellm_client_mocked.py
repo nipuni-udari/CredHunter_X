@@ -68,8 +68,8 @@ def _install_fake_completion(monkeypatch: pytest.MonkeyPatch, response=None, err
 
 
 def _install_fake_completion_sequence(monkeypatch: pytest.MonkeyPatch, side_effects: list):
-    """Each entry in side_effects is consumed in order per call: an
-    exception instance is raised, anything else is returned."""
+    """side_effects are used in order, one per call: exceptions are raised,
+    anything else is returned."""
     calls: list[dict[str, object]] = []
     remaining = list(side_effects)
 
@@ -144,7 +144,7 @@ def test_generate_wraps_sdk_errors_in_a_typed_error(monkeypatch: pytest.MonkeyPa
     with pytest.raises(LiteLLMClientError):
         client.generate("classify this")
 
-    # non-retryable errors fail immediately — no wasted retry attempts
+    # non-retryable errors fail at once, with no retries
     assert len(calls) == 1
 
 
@@ -205,10 +205,8 @@ def test_generate_raises_after_exhausting_all_retry_attempts(monkeypatch: pytest
 def test_generate_retries_when_the_model_returns_an_empty_completion(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """An empty completion is a successful response with no content, not an
-    exception, so the error-retry path never sees it. Left alone it reaches
-    the caller as unparseable output and the candidate is dropped from the
-    evaluation -- observed once in a 517-candidate run."""
+    """An empty reply is a successful response, not an exception, so
+    generate() retries it separately."""
     monkeypatch.setattr(litellm_client_module.time, "sleep", lambda _: None)
     empty = _FakeResponse(
         choices=[_FakeChoice(message=_FakeMessage(content=""))],
@@ -224,7 +222,7 @@ def test_generate_retries_when_the_model_returns_an_empty_completion(
     result = client.generate("classify this")
 
     assert result.text == '{"label": "true_secret"}'
-    # usage must come from the attempt that actually answered, not the empty one
+    # usage must come from the attempt that answered, not the empty one
     assert result.output_tokens == 31
     assert len(calls) == 2
 
@@ -249,8 +247,8 @@ def test_generate_retries_a_whitespace_only_completion_too(monkeypatch: pytest.M
 
 
 def test_generate_gives_up_after_repeated_empty_completions(monkeypatch: pytest.MonkeyPatch):
-    """It must bound the retries and hand the empty result back for the
-    caller's existing error handling, not loop or raise something new."""
+    """Retries are bounded and the empty result goes back to the caller's
+    normal error handling."""
     monkeypatch.setattr(litellm_client_module.time, "sleep", lambda _: None)
     empty = _FakeResponse(
         choices=[_FakeChoice(message=_FakeMessage(content=""))],
@@ -268,8 +266,7 @@ def test_generate_gives_up_after_repeated_empty_completions(monkeypatch: pytest.
 
 
 def test_generate_does_not_retry_a_normal_response(monkeypatch: pytest.MonkeyPatch):
-    """Pins that the empty-retry loop costs nothing on the happy path -- one
-    API call per generate(), exactly as before."""
+    """No extra calls on the normal path: one API call per generate()."""
     fake_response = _FakeResponse(
         choices=[_FakeChoice(message=_FakeMessage(content='{"label": "false_positive"}'))],
         usage=_FakeUsage(prompt_tokens=3, completion_tokens=7),
@@ -286,9 +283,8 @@ def test_generate_does_not_retry_a_normal_response(monkeypatch: pytest.MonkeyPat
 def test_generate_with_tools_still_accepts_an_empty_content_response(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """The empty-retry loop is deliberately confined to generate(). Under
-    tool calling, empty content plus tool_calls is the normal shape of a
-    turn -- retrying it would break Arm B."""
+    """The empty retry only applies to generate(). With tools, empty content
+    plus tool_calls is a normal turn, and retrying it would break Arm B."""
     fake_response = _FakeResponse(
         choices=[
             _FakeChoice(
@@ -387,8 +383,7 @@ def test_generate_with_tools_maps_final_text_answer_when_no_tool_calls(
     assert result.tool_calls == []
     assert result.input_tokens == 10
     assert result.output_tokens == 4
-    # no response_format is sent alongside tools -- see litellm_client.py's
-    # generate_with_tools docstring for why
+    # no response_format is sent with tools (see generate_with_tools)
     assert calls[0]["response_format"] is None
     assert calls[0]["tools"] == [{"type": "function"}]
 
@@ -441,8 +436,8 @@ def test_generate_with_tools_omits_tools_kwarg_when_tools_list_is_empty(
     client = LiteLLMClient(model="groq/openai/gpt-oss-120b", api_key="fake-key")
     client.generate_with_tools([{"role": "user", "content": "x"}], tools=[])
 
-    # empty tools -> no tools kwarg reaches litellm at all, forcing a
-    # plain-text answer instead of offering (zero) functions to call
+    # with empty tools no tools kwarg is sent, so the model has to answer in
+    # plain text
     assert calls[0]["tools"] is None
 
 

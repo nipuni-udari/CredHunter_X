@@ -33,10 +33,8 @@ def test_explicit_single_mode_overrides_the_agentic_default(tmp_path: Path):
 
 
 def test_treatment_key_in_yaml_is_ignored_and_stays_masked(tmp_path: Path):
-    """The shipped CLI must never be able to send raw secrets, regardless
-    of what a repo's own config file requests — see settings.py's
-    load_scan_config docstring and the research scope doc's own
-    .secretscan.yml example, which only ever exposes `mode`."""
+    """The shipped CLI must never send raw secrets, whatever a repo's config
+    file asks for. Only mode can be configured."""
     path = tmp_path / ".secretscan.yml"
     path.write_text("mode: single\ntreatment: raw\n")
 

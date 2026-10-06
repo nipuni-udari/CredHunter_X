@@ -15,11 +15,9 @@ from credhunter_x.models.evaluation import MetricReport
 def compute_metrics(
     outcomes: list[MatchOutcome], *, total_true_count: int, arm: str, treatment: str
 ) -> MetricReport:
-    """precision/recall/F1 from matched outcomes, matching CredData's own
-    scoring: LOST is excluded entirely, not counted as a false positive.
-    total_true_count is every GroundTruth=='T' row in the dataset, not
-    just what became a candidate -- so recall reflects secrets the
-    scanner never even flagged."""
+    """Precision, recall and F1 scored the CredData way: LOST is left out, not
+    counted as a false positive. total_true_count is every true row in the
+    dataset, so recall includes secrets the scanner never found."""
     counts = Counter(outcomes)
     true_positive = counts[MatchOutcome.TRUE_POSITIVE]
     false_positive = counts[MatchOutcome.FALSE_POSITIVE]
@@ -42,11 +40,10 @@ def compute_metrics(
 
 
 def mcnemar_test(correct_a: list[bool], correct_b: list[bool]) -> tuple[float, float]:
-    """Continuity-corrected McNemar's test on paired per-candidate
-    correctness (same order, same length). scipy has no built-in
-    mcnemar(), so the statistic's hand-computed and only the p-value
-    lookup uses scipy.stats.chi2. Returns (0.0, 1.0) if there's no
-    discordant pair -- undefined, not "no difference"."""
+    """Continuity-corrected McNemar test (McNemar, 1947) on paired
+    per-candidate correctness. scipy has no mcnemar(), so the statistic is
+    computed here and scipy.stats.chi2 gives the p-value. Returns (0.0, 1.0)
+    when there are no discordant pairs."""
     if len(correct_a) != len(correct_b):
         raise ValueError("correct_a and correct_b must be the same length (paired candidates)")
 
@@ -65,18 +62,13 @@ def mcnemar_test(correct_a: list[bool], correct_b: list[bool]) -> tuple[float, f
 def agreement_vectors(
     outcomes: list[MatchOutcome], flagged: list[bool]
 ) -> tuple[list[bool], list[bool]]:
-    """Paired correctness for a detector-vs-LLM McNemar, where "correct"
-    means the prediction agrees with ground truth.
+    """Paired correctness for the detector-vs-LLM McNemar, where correct means
+    agreeing with ground truth.
 
-    The other definition -- correct = flagged AND really a secret -- makes
-    the LLM's correct set a strict subset of the detector's, since the
-    detector flags every candidate it generated. One McNemar cell is then
-    structurally zero and the test can't favour the LLM however well it
-    does: a correctly suppressed false positive counts as wrong for both.
-    Both are reported; this is the pair that answers RQ1.
-
-    LOST is dropped -- with no ground-truth row there's nothing to agree
-    with, matching compute_metrics, which excludes it from precision."""
+    With "correct = flagged and really a secret" the LLM can never beat the
+    detector, since the detector flags everything; a correctly dismissed false
+    positive would count as wrong for both. Both versions are reported and this
+    one answers RQ1. LOST rows are dropped, as in compute_metrics."""
     if len(outcomes) != len(flagged):
         raise ValueError("outcomes and flagged must be the same length (paired candidates)")
 
@@ -93,8 +85,8 @@ def agreement_vectors(
 
 @dataclass(frozen=True)
 class ConfusionCounts:
-    """Candidate-level confusion. Distinct from compute_metrics, whose
-    recall denominator is every secret in the corpus, not just candidates."""
+    """Candidate-level confusion. Unlike compute_metrics, recall here only
+    counts candidates, not every secret in the corpus."""
 
     true_positive: int
     false_positive: int
@@ -120,8 +112,8 @@ class ConfusionCounts:
 def candidate_confusion(
     outcomes: Sequence[MatchOutcome], flagged: Sequence[bool]
 ) -> ConfusionCounts:
-    """LOST is dropped -- with no ground-truth row there's nothing to be
-    right or wrong about, the same exclusion compute_metrics applies."""
+    """LOST rows are dropped, as in compute_metrics: with no ground truth
+    there's nothing to be right or wrong about."""
     if len(outcomes) != len(flagged):
         raise ValueError("outcomes and flagged must be the same length (paired candidates)")
 
@@ -142,9 +134,9 @@ def candidate_confusion(
 
 
 def matthews_corrcoef(counts: ConfusionCounts) -> float:
-    """MCC stays honest on unbalanced classes where F1 flatters. Returns
-    0.0 when a row or column is empty -- undefined, conventionally
-    reported as no correlation. A flag-everything detector scores 0.0."""
+    """Matthews correlation coefficient (Matthews, 1975), which stays fair on
+    unbalanced classes. Returns 0.0 when a row or column is empty, so a detector
+    that flags everything scores 0.0."""
     tp, fp = counts.true_positive, counts.false_positive
     fn, tn = counts.false_negative, counts.true_negative
     denominator = math.sqrt((tp + fp) * (tp + fn) * (tn + fp) * (tn + fn))
@@ -166,10 +158,9 @@ def bootstrap_ci(
     confidence: float = 0.95,
     seed: int = 42,
 ) -> tuple[float, float]:
-    """Percentile bootstrap over candidates. Captures sampling variation --
-    which candidates the scanners happened to produce -- and NOT run-to-run
-    LLM variation, which needs repeated runs instead. Seeded, so a rerun
-    reproduces the interval exactly."""
+    """Percentile bootstrap over candidates (Efron, 1979). Covers sampling
+    variation, not run-to-run LLM variation. Seeded, so the interval can be
+    reproduced exactly."""
     if len(outcomes) != len(flagged):
         raise ValueError("outcomes and flagged must be the same length (paired candidates)")
     if resamples < 1:
@@ -198,8 +189,7 @@ def bootstrap_ci(
 def stratify_by_rule(
     rule_ids: Sequence[str], outcomes: Sequence[MatchOutcome], flagged: Sequence[bool]
 ) -> dict[str, ConfusionCounts]:
-    """Per-rule confusion, so "where does the LLM actually help" is
-    answerable rather than asserted."""
+    """Confusion per rule, to show where the LLM actually helps."""
     if not len(rule_ids) == len(outcomes) == len(flagged):
         raise ValueError("rule_ids, outcomes and flagged must be the same length")
 
@@ -213,10 +203,9 @@ def stratify_by_rule(
 
 
 def cohens_kappa(rater_a: list[object], rater_b: list[object]) -> float:
-    """Inter-rater agreement, corrected for chance. po = observed
-    agreement, pe = agreement expected by chance from each rater's own
-    category distribution. Returns 1.0 for the degenerate 0/0 case
-    (everyone agrees on one category)."""
+    """Cohen's kappa (Cohen, 1960). po is observed agreement and pe is the
+    agreement expected by chance. Returns 1.0 in the 0/0 case where everyone
+    agrees on one category."""
     if len(rater_a) != len(rater_b):
         raise ValueError("rater_a and rater_b must be the same length (paired items)")
     if not rater_a:
@@ -234,11 +223,9 @@ def cohens_kappa(rater_a: list[object], rater_b: list[object]) -> float:
 
 
 def fleiss_kappa(ratings: list[list[object]]) -> float:
-    """Agreement among a fixed number of raters per item (unlike
-    cohens_kappa's two named raters) -- used for the model's own
-    stability across repeated calls. ratings[i] is every rater's category
-    for item i; every item needs the same rater count (>= 2). Returns 1.0
-    for the degenerate 0/0 case."""
+    """Fleiss' kappa (Fleiss, 1971) for a fixed number of raters per item, used
+    for the model's stability across repeated calls. ratings[i] holds every
+    rater's category for item i. Returns 1.0 in the 0/0 case."""
     if not ratings:
         raise ValueError("cannot compute kappa over an empty rating set")
 
@@ -272,9 +259,8 @@ def fleiss_kappa(ratings: list[list[object]]) -> float:
 def wilson_score_interval(
     successes: int, n: int, *, confidence: float = 0.95
 ) -> tuple[float, float]:
-    """Binomial-proportion CI for a pass rate. Wilson, not a naive Wald
-    interval -- stays within [0,1] and holds up better at small n. z comes
-    from scipy.stats.norm.ppf rather than hardcoding 1.96."""
+    """Wilson score interval (Wilson, 1927) for a pass rate. Unlike the Wald
+    interval it stays inside [0, 1] and behaves better at small n."""
     if n <= 0:
         raise ValueError("n must be positive")
     if not 0 <= successes <= n:

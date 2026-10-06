@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-# Static lookup -- gitleaks has no CLI for printing a rule's description.
+# Static lookup: gitleaks has no command that prints a rule's description.
 _RULE_DESCRIPTIONS: dict[str, str] = {
     "aws-access-token": (
         "Matches AWS access key ID format (AKIA/ASIA prefix + 16 alphanumeric "

@@ -18,14 +18,11 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-    # litellm-style "provider/model" string, e.g. "anthropic/claude-sonnet-5".
-    # Switching providers is a config change, not a code change. Required,
-    # not defaulted -- a missing LLM_MODEL should fail loudly at startup,
-    # not silently fall back to an arbitrary unused model.
+    # litellm "provider/model" string, e.g. "anthropic/claude-sonnet-5".
+    # Required, so a missing value fails at startup.
     llm_model: str
     llm_api_key: str = ""
-    # Only meaningful for reasoning-capable models; ignored by others.
-    # Unset leaves the model's own default reasoning behaviour in place.
+    # Only used by reasoning models; leaving it unset keeps the model's default.
     llm_reasoning_effort: str | None = None
     gitleaks_binary_path: str = "gitleaks"
     trufflehog_binary_path: str = "trufflehog3"
@@ -37,18 +34,16 @@ class Mode(StrEnum):
 
 
 class ScanConfig(BaseModel):
-    """User-selectable scan behaviour, loaded from .secretscan.yml.
-    Defaults to masked (raw must be opted in) and agentic (more thorough,
-    worth the extra cost for a CI gate)."""
+    """Scan settings from .secretscan.yml. Defaults to masked (raw has to be
+    asked for) and agentic (more thorough, worth the cost in CI)."""
 
     mode: Mode = Mode.AGENTIC
     treatment: Treatment = Treatment.MASKED
 
 
 def load_scan_config(path: Path = Path(".secretscan.yml")) -> ScanConfig:
-    """Loads scan behaviour for the shipped CLI. `treatment` isn't
-    user-configurable here -- always masked, regardless of what the file
-    says; only Python callers can request otherwise."""
+    """Loads scan settings for the CLI. The treatment is always masked here,
+    whatever the file says; only Python callers can choose another."""
     if not path.exists():
         return ScanConfig()
     data = yaml.safe_load(path.read_text()) or {}

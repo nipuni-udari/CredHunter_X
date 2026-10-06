@@ -35,8 +35,8 @@ def test_maps_fields_correctly_for_github_token_finding():
     assert github.line_start == 1
     assert github.line_end == 1
     assert github.rule_id == "high-entropy"
-    # trufflehog3's "secret" is only the high-entropy fragment it matched,
-    # not the whole ghp_-prefixed token gitleaks would report.
+    # trufflehog3's "secret" is only the high-entropy part, not the whole
+    # ghp_ token gitleaks would report.
     assert github.matched_value == "wWPw5k4aXcaT4fNP0UcnZwJUVFk6LO0pINUx"
     assert github.value_start == 20
     assert github.value_end == 56
@@ -73,11 +73,7 @@ def test_empty_findings_list_returns_empty_candidates():
 
 
 def test_two_distinct_secrets_on_the_same_line_get_distinct_ids(tmp_path):
-    """The real bug this closes: trufflehog3's generic high-entropy rule can
-    flag two genuinely different secrets on one line. Without an occurrence
-    index, both would get the identical file:rule:line id -- and
-    classify_candidates' id-keyed results dict would silently drop one of
-    the two classifications (the second overwrites the first)."""
+    """Two different secrets on one line get two different ids."""
     (tmp_path / "two_secrets.py").write_text('A = "aaaaaaaaaaaaaaaa"; B = "bbbbbbbbbbbbbbbb"\n')
     findings = [
         {

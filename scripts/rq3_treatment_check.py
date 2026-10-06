@@ -1,17 +1,6 @@
-"""Does redaction change remediation QUALITY, not just wording? (RQ3)
-
-E3 has no independent variable, so RQ3 scores one condition -- but which one
-needs an argument, not a default. `raw` is the best case (the model sees
-everything); `masked` is the configuration RQ4 says you should actually
-deploy. This settles it empirically instead.
-
-Paired by candidate: the same file:line scored under both treatments, so
-differences cannot come from scoring different rows. Unpaired samples would
-confound treatment with which candidates each treatment happened to flag.
-
-Read the result against the checker's own 0.047 verdict flip rate
-(scripts/check_checker_stability.py) -- a difference of one or two rows out
-of thirty is inside that noise and means nothing.
+"""Checks whether redaction changes remediation quality (RQ3) by comparing
+raw and masked on the same file:line pairs. Read the result against the
+checker's own flip rate of 0.047: one or two rows in thirty is just noise.
 
 Usage:
     uv run python scripts/rq3_treatment_check.py --arm single --n 30
@@ -133,10 +122,7 @@ def main() -> None:
                 errors += 1
                 continue
             except LeakError:
-                # The guard already refused the call -- the payload never
-                # left. This only decides what happens after: drop the row
-                # rather than kill the run, same policy as the orchestrator's
-                # skip_candidate_on_error. Recorded, never silently dropped.
+                # The guard refused the call, so skip the row and record it.
                 print(f"    guard blocked {cid} ({treatment}) -- excluded", flush=True)
                 blocked.append(f"{treatment}:{cid}")
                 continue
